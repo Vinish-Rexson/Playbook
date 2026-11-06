@@ -65,6 +65,37 @@ npx expo start
 
 The phone must reach your laptop over the same Wi-Fi network.
 
+## Share with friends (Android)
+
+The API runs on Vercel and the app is a signed APK your friends install from a link. Both fit the free tiers.
+
+**1. Host the API on Vercel (once).** `vercel.json` builds only the server (`expo export -p web --no-ssg`), and
+`api/index.ts` serves it. There is no website.
+
+```bash
+npx vercel login
+npx vercel deploy --prod
+```
+
+In the Vercel dashboard, open Project → Settings → Environment Variables and set `DATABASE_URL` (Supabase's
+**Transaction pooler**, port 6543, for serverless), `FLASH_API_KEY` and `SOLANA_RPC_URL`, then deploy again. Put the
+production URL in `.env` as `PLAYBOOK_API_ORIGIN`. Deploy again after any change under `src/server` or `src/app/api`.
+
+**2. Release an APK.**
+
+```bash
+npm run release -- --notes "What changed"
+```
+
+The script checks that the API answers, bumps the version, builds a signed arm64 APK, and uploads it to Supabase
+Storage (public bucket `releases`) with a `latest.json`. It prints the link to share (`.../releases/playbook.apk`).
+Installed copies show **Update available** on Discover and download the new APK when tapped. The first run creates the
+signing key at `~/.playbook/playbook-release.jks` and saves its password in `.env`. Back up both: every update must be
+signed with the same key. If the upload fails after a build, run `npm run release -- --upload-only`.
+
+A release APK is signed with a different key than a development build, so uninstall the dev build first. That deletes
+the wallet on the phone, so write down its secret phrase first (Wallet → Security) and import it afterwards.
+
 ## Demo tips
 
 - Use **Quick Scalp** (market buy, ±0.3%) so the fill and the take-profit happen on camera.

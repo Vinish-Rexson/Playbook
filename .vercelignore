@@ -1,0 +1,9 @@
+android
+ios
+data
+dist
+.expo
+*.log
+.env
+.env.*
+!.env.example

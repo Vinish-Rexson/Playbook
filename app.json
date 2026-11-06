@@ -19,7 +19,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.playbook.app"
+      "package": "com.playbook.app",
+      "versionCode": 1
     },
     "web": {
       "output": "server",

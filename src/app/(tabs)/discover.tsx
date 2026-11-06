@@ -7,6 +7,7 @@ import Animated, { Easing, FadeInDown } from 'react-native-reanimated';
 import { MarketCard } from '@/components/charts/MarketCard';
 import { ModeBadge } from '@/components/ModeBadge';
 import { TemplateCard } from '@/components/Playbook';
+import { UpdateBanner } from '@/components/UpdateBanner';
 import { useFetch } from '@/hooks/useFetch';
 import { api } from '@/lib/api';
 import { usd } from '@/lib/pricing';
@@ -40,6 +41,7 @@ export default function Discover() {
         </Row>
       </Row>
 
+      <UpdateBanner />
       <MarketCard />
 
       <Row gap={12} style={{ marginTop: space(4) }}>
