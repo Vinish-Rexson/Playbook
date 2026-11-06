@@ -34,6 +34,16 @@ export const ALL_STEP_KEYS: StepKey[] = ['quote', 'approveUsdc', 'approveWeth', 
 
 type Report = (key: StepKey, state: StepState, detail?: string) => void;
 
+/** Not enough USDC on Base; `missingUsd` is how much more is needed (the app offers a Uniswap swap for it). */
+export class ShortOfUsdc extends Error {
+  constructor(
+    message: string,
+    readonly missingUsd: number,
+  ) {
+    super(message);
+  }
+}
+
 type Opts = {
   templateId: string;
   amountUsd: number;
@@ -55,8 +65,9 @@ async function runBase(opts: Opts): Promise<Application> {
   onStep('quote', 'active', 'Checking your balance…');
   const bal = await balancesOf(wallet.address);
   if (bal.usdc + 1e-9 < opts.amountUsd) {
-    throw new Error(
-      `You have ${bal.usdc.toFixed(2)} USDC on Base and this needs ${opts.amountUsd.toFixed(2)}. Add USDC from Profile → Receive.`,
+    throw new ShortOfUsdc(
+      `You have ${bal.usdc.toFixed(2)} USDC on Base and this needs ${opts.amountUsd.toFixed(2)}. Swap ETH for the rest on Uniswap, or add USDC from Wallet → Receive.`,
+      opts.amountUsd - bal.usdc,
     );
   }
 

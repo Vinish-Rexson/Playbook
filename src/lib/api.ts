@@ -68,6 +68,27 @@ export type OwnerProof = { time: string; signature: string };
 export type Candle = { t: number; o: number; h: number; l: number; c: number };
 export type Timeframe = '15m' | '1h' | '6h' | '1d';
 
+/** Uniswap swap on Base (server proxies the Uniswap API so its key stays off the phone). */
+export type SwapSymbol = 'ETH' | 'USDC' | 'WETH';
+export type UniswapPermit = { domain: Record<string, unknown>; types: Record<string, { name: string; type: string }[]>; values: Record<string, unknown> };
+export type UniswapQuote = {
+  quote: unknown;
+  routing: string;
+  approval: { to: string; data: string; value: string } | null;
+  permitData: UniswapPermit | null;
+  summary: {
+    tokenIn: SwapSymbol;
+    tokenOut: SwapSymbol;
+    /** Base units, as strings. */
+    amountIn: string;
+    amountOut: string;
+    minOut: string;
+    priceImpact: number | null;
+    gasFeeUsd: number | null;
+    route: string | null;
+  };
+};
+
 export const api = {
   candles: (chain: Chain, tf: Timeframe) => req<{ candles: Candle[] }>(`/api/candles?chain=${chain}&tf=${tf}`),
   price: (chain: Chain = 'base') =>
@@ -127,4 +148,8 @@ export const api = {
   closeQuote: (id: string) => req<CloseQuote>(`/api/positions/${id}/close`, { body: { step: 'quote' } }),
   closeSubmit: (id: string, body: { quoteId: string; userSignature: string; permitSignature?: string; approvalTxs?: string[] }) =>
     req<{ position: Application }>(`/api/positions/${id}/close`, { body: { step: 'submit', ...body } }),
+  uniswapQuote: (body: { swapper: string; tokenIn: SwapSymbol; tokenOut: SwapSymbol; type: 'EXACT_INPUT' | 'EXACT_OUTPUT'; amount: string }) =>
+    req<UniswapQuote>('/api/uniswap/quote', { body }),
+  uniswapSwap: (body: { quote: unknown; signature?: string; permitData?: UniswapPermit }) =>
+    req<{ to: string; data: string; value: string; gasLimit: string | null }>('/api/uniswap/swap', { body }),
 };

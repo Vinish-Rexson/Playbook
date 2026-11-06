@@ -46,6 +46,7 @@ export default function RootLayout() {
           <Stack.Screen name="wallet/secret" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="wallet/receive" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="wallet/send" options={{ animation: 'slide_from_bottom' }} />
+          <Stack.Screen name="wallet/swap" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="search" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="trader/[address]" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="position/[id]" options={{ animation: 'slide_from_right' }} />

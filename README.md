@@ -65,6 +65,34 @@ npx expo start
 
 The phone must reach your laptop over the same Wi-Fi network.
 
+## Uniswap integration
+
+Playbook swaps on **Base** through the **Uniswap API** (`trade-api.gateway.uniswap.org/v1`), which routes through
+Uniswap v2, v3 and v4 pools. Users get:
+
+- **Wallet → Swap:** ETH, USDC and WETH. Enter what you pay (exact input) or what you want to get (exact output).
+- **Get USDC with Uniswap:** when applying a playbook fails for lack of USDC, one tap opens a swap for exactly the
+  missing amount, paid in ETH.
+
+How it works (`check_approval` → `quote` → sign `permitData` → `swap` → send):
+
+| Step | Code |
+| --- | --- |
+| API client (server only, key stays off the phone, 6 req/s limit) | [src/server/uniswap.ts#L31](src/server/uniswap.ts#L31) |
+| `/quote` with v2 / v3 / v4 routing and 0.5% slippage | [src/server/uniswap.ts#L84](src/server/uniswap.ts#L84) |
+| `/check_approval` for Permit2 (ERC-20 input only) | [src/server/uniswap.ts#L107](src/server/uniswap.ts#L107) |
+| `/swap` turns the quote and Permit2 signature into a transaction | [src/server/uniswap.ts#L130](src/server/uniswap.ts#L130) |
+| App routes | [src/app/api/uniswap/quote+api.ts](src/app/api/uniswap/quote+api.ts), [src/app/api/uniswap/swap+api.ts](src/app/api/uniswap/swap+api.ts) |
+| Wallet flow: approval, Permit2 signature, router check, send | [src/lib/swapFlow.ts#L34](src/lib/swapFlow.ts#L34) |
+| `permitData` → standard EIP-712 JSON for the signer | [src/lib/swapFlow.ts#L22](src/lib/swapFlow.ts#L22) |
+| Transaction must call a Universal Router on Base | [src/lib/swapFlow.ts#L60](src/lib/swapFlow.ts#L60), [src/lib/constants.ts#L16](src/lib/constants.ts#L16) |
+| Confirmation sheet: "Swap X for Y" and the Permit2 permit, decoded on the phone | [src/wallet/describe.ts#L69](src/wallet/describe.ts#L69), [src/wallet/describe.ts#L174](src/wallet/describe.ts#L174) |
+| Swap screen | [src/app/wallet/swap.tsx](src/app/wallet/swap.tsx) |
+| Apply flow: short of USDC → swap for the missing amount | [src/lib/applyFlow.ts#L38](src/lib/applyFlow.ts#L38), [src/components/ApplySheet.tsx#L117](src/components/ApplySheet.tsx#L117) |
+
+Setup: create a free key at developers.uniswap.org/dashboard and set `UNISWAP_API_KEY` in `.env` (local) and in
+Vercel → Environment Variables (hosted API). Developer feedback is in [FEEDBACK.md](FEEDBACK.md).
+
 ## Share with friends (Android)
 
 The API runs on Vercel and the app is a signed APK your friends install from a link. Both fit the free tiers.

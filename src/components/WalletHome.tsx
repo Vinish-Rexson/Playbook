@@ -2,7 +2,7 @@
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { ArrowUpRight, Check, ChevronRight, Copy, Eye, EyeOff, ExternalLink, KeyRound, Lock, QrCode, Trash2, TriangleAlert } from 'lucide-react-native';
+import { ArrowDownUp, ArrowUpRight, Check, ChevronRight, Copy, Eye, EyeOff, ExternalLink, KeyRound, Lock, QrCode, Trash2, TriangleAlert } from 'lucide-react-native';
 import { type ReactNode, useState } from 'react';
 import { Alert, Linking, Pressable, StyleSheet, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
@@ -184,6 +184,9 @@ export function WalletHome() {
               label="Receive"
               onPress={() => router.push({ pathname: '/wallet/receive', params: { chain } })}
             />
+            {chain === 'base' ? (
+              <Action icon={<ArrowDownUp size={20} strokeWidth={1.75} color={colors.text} />} label="Swap" onPress={() => router.push('/wallet/swap')} />
+            ) : null}
             <Action icon={copied ? <Check size={20} color={colors.profit} /> : <Copy size={20} strokeWidth={1.75} color={colors.text} />} label="Copy" onPress={copy} />
             <Action icon={<ExternalLink size={20} strokeWidth={1.75} color={colors.text} />} label="Explorer" onPress={() => Linking.openURL(addressUrl(addr, chain))} />
           </Row>
@@ -302,7 +305,7 @@ const st = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: colors.bg,
   },
-  action: { alignItems: 'center', gap: 8, width: 72 },
+  action: { alignItems: 'center', gap: 8, width: 64 },
   actionIcon: {
     width: 56,
     height: 56,

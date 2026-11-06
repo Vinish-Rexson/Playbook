@@ -8,6 +8,7 @@ import {
   SOL_DECIMALS,
   SOL_USDC,
   TOKEN_ACCOUNT_RENT_SOL,
+  UNISWAP_ROUTERS,
   USDC,
   USDC_DECIMALS,
   WETH,
@@ -18,9 +19,12 @@ import { associatedTokenAddress, decodeLegacyMessage, messageFeeLamports, PROGRA
 
 import { parseTypedData } from './typedData';
 
+/** The Uniswap quote behind a swap transaction (amounts with symbols), shown on the sheet. */
+export type SwapSummary = { sell: string; buy: string; minimum: string };
+
 export type SignRequest =
-  /** value: ETH sent, in wei, as a decimal string (plain ETH transfers). */
-  | { kind: 'transaction'; to: Address; data: Hex; value?: string }
+  /** value: ETH sent, in wei, as a decimal string. swap: only used when `to` is a Uniswap Universal Router. */
+  | { kind: 'transaction'; to: Address; data: Hex; value?: string; swap?: SwapSummary }
   | { kind: 'typedData'; json: string }
   | { kind: 'message'; message: string }
   /** Solana: Ed25519 over a UTF-8 message (Flash order or cancel). */
@@ -55,12 +59,34 @@ const nameOf = (addr: string) => {
   const a = addr.toLowerCase();
   if (a === FLASH_ALLOWANCE) return 'Definitive Flash';
   if (a === PERMIT2) return 'Permit2 (Uniswap)';
+  if (UNISWAP_ROUTERS.includes(a)) return 'Uniswap Universal Router';
   return TOKENS[a]?.symbol ?? shortAddr(addr);
 };
 
-function describeTx(to: Address, data: Hex, value?: string): Described {
+function describeTx(to: Address, data: Hex, value?: string, swap?: SwapSummary): Described {
   const token = TOKENS[to.toLowerCase()];
   const wei = value ? BigInt(value) : 0n;
+  if (UNISWAP_ROUTERS.includes(to.toLowerCase())) {
+    return {
+      icon: 'approve',
+      label: 'Transaction · Base',
+      title: swap ? `Swap ${swap.sell} for ${swap.buy}` : 'Swap on Uniswap',
+      subtitle: 'Trades through Uniswap pools on Base. If the price moves more than 0.5%, the swap cancels itself and only the network fee is spent.',
+      rows: [
+        ...(swap
+          ? [
+              { k: 'You pay', v: swap.sell },
+              { k: 'You get about', v: swap.buy },
+              { k: 'At least', v: swap.minimum },
+            ]
+          : []),
+        ...(wei > 0n ? [{ k: 'ETH sent', v: `${formatUnits(wei, 18)} ETH` }] : []),
+        { k: 'Contract', v: 'Uniswap Universal Router' },
+        { k: 'Network', v: 'Base' },
+      ],
+      warning: swap ? undefined : 'Only confirm swaps you started in Playbook.',
+    };
+  }
   if ((data === '0x' || !data) && wei > 0n) {
     return {
       icon: 'approve',
@@ -100,7 +126,10 @@ function describeTx(to: Address, data: Hex, value?: string): Described {
         icon: 'approve',
         label: 'Transaction',
         title: `Allow ${sym}`,
-        subtitle: 'One-time approval so Definitive Flash can trade this token for you. Costs a small ETH network fee.',
+        subtitle:
+          spender.toLowerCase() === PERMIT2
+            ? 'One-time approval for Permit2, the approval contract Uniswap swaps and Flash orders use. Each trade still needs your signature. Costs a small ETH network fee.'
+            : 'One-time approval so Definitive Flash can trade this token for you. Costs a small ETH network fee.',
         rows: [
           { k: 'Token', v: sym },
           { k: 'Spender', v: nameOf(spender) },
@@ -141,6 +170,26 @@ function describeTypedData(json: string): Described {
   const td = parseTypedData(json);
   const app = typeof td.domain.name === 'string' ? td.domain.name : 'Unknown app';
   const isPermit = /permit/i.test(app) || /permit/i.test(td.primaryType);
+  const details = td.message.details as Record<string, unknown> | undefined;
+  if (td.primaryType === 'PermitSingle' && details && typeof details.token === 'string') {
+    const tok = TOKENS[details.token.toLowerCase()];
+    const amount = BigInt(String(details.amount ?? 0));
+    const expires = Number(details.expiration ?? 0);
+    return {
+      icon: 'sign',
+      label: 'Signature request',
+      title: `Permit ${tok?.symbol ?? 'token'} spending`,
+      subtitle: 'Lets the app below move this token for your swap, through Permit2. Free, no gas.',
+      rows: [
+        { k: 'App', v: app },
+        { k: 'Token', v: tok?.symbol ?? shortAddr(details.token) },
+        { k: 'Amount', v: amount >= maxUint256 / 2n || amount >= 2n ** 159n ? 'Unlimited' : `${formatUnits(amount, tok?.decimals ?? 18)} ${tok?.symbol ?? ''}`.trim() },
+        { k: 'Spender', v: fmtValue(td.message.spender) },
+        ...(expires ? [{ k: 'Expires', v: new Date(expires * 1000).toLocaleDateString() }] : []),
+      ],
+      warning: td.domain.chainId !== undefined && td.domain.chainId !== 8453 ? `This is for chain ${td.domain.chainId}, not Base.` : undefined,
+    };
+  }
   const fields = Object.entries(td.message)
     .filter(([, v]) => scalar(v))
     .slice(0, 4)
@@ -295,7 +344,7 @@ function describeSolTransaction(messageB64: string, recipient?: string): Describ
 export function describe(req: SignRequest): Described {
   if (req.kind === 'solMessage') return describeSolMessage(req.message);
   if (req.kind === 'solTransaction') return describeSolTransaction(req.message, req.recipient);
-  if (req.kind === 'transaction') return describeTx(req.to, req.data, req.value);
+  if (req.kind === 'transaction') return describeTx(req.to, req.data, req.value, req.swap);
   if (req.kind === 'typedData') {
     try {
       return describeTypedData(req.json);

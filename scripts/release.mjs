@@ -3,6 +3,8 @@
 //   npm run release                         bump the version, build, upload, publish latest.json
 //   npm run release -- --notes "Fixed X"    same, with a note shown in the app's update banner
 //   npm run release -- --upload-only        upload the APK already built (no bump, no build)
+//   npm run release -- --no-prebuild        reuse android/ instead of regenerating it (faster rebuild after a
+//                                           failed build; only when app.json changed nothing but the version)
 //
 // Needs in .env: PLAYBOOK_API_ORIGIN (the Vercel URL), SUPABASE_URL, SUPABASE_SECRET_KEY.
 // The signing key is created on the first run at ~/.playbook/playbook-release.jks (password saved to .env as
@@ -14,7 +16,7 @@
 //   latest.json                       what the app reads to offer "Update available"
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -98,6 +100,11 @@ if (!flag('--upload-only')) {
   writeFileSync(appJsonPath, JSON.stringify(appJson, null, 2) + '\n');
   console.log(`\n  version ${version} (code ${versionCode})`);
 
+  // Gradle needs the Android SDK; use the default install location when ANDROID_HOME is not set.
+  const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || (win ? path.join(process.env.LOCALAPPDATA ?? '', 'Android', 'Sdk') : path.join(homedir(), 'Library', 'Android', 'sdk'));
+  if (!existsSync(sdk)) fail('Android SDK not found. Set ANDROID_HOME (see README → Setup).');
+  process.env.ANDROID_HOME = sdk;
+
   const run = (cmd, argv, cwd = root) => {
     const r = spawnSync(cmd, argv, { cwd, stdio: 'inherit', shell: win, env: process.env });
     if (r.status !== 0) {
@@ -107,10 +114,36 @@ if (!flag('--upload-only')) {
   };
 
   // 4. Regenerate android/ from app.json, then build one arm64 APK (what phones from the last 8+ years run).
-  step('Generating the native project');
-  run('npx', ['expo', 'prebuild', '--platform', 'android', '--no-install']);
-  step('Building the release APK (several minutes)');
-  run(win ? 'gradlew.bat' : './gradlew', [
+  if (flag('--no-prebuild')) {
+    // Reuse android/ (much faster: the compiled native code is kept). Only safe when it was generated for
+    // exactly this version and nothing else in app.json / plugins changed since.
+    const gradle = readFileSync(path.join(root, 'android/app/build.gradle'), 'utf8');
+    if (!gradle.includes(`versionCode ${versionCode}`) || !gradle.includes(`versionName "${version}"`)) {
+      writeFileSync(appJsonPath, original);
+      fail(`android/ is not generated for ${version} (code ${versionCode}). Run without --no-prebuild. The version bump was undone.`);
+    }
+    step('Reusing the native project in android/');
+  } else {
+    step('Generating the native project');
+    run('npx', ['expo', 'prebuild', '--platform', 'android', '--no-install']);
+  }
+
+  // Native code: use the newest CMake in the SDK. CMake 3.22's ninja (1.10) cannot open paths over 260
+  // characters on Windows, and React Native's codegen object files go past that; ninja 1.12+ can (with
+  // Windows long paths enabled). local.properties is per machine and regenerated with android/.
+  const cmakeRoot = path.join(sdk, 'cmake');
+  const byVersion = (a, b) => b.split('.').map(Number).reduce((d, n, i) => d || n - (Number(a.split('.')[i]) || 0), 0);
+  const cmake = existsSync(cmakeRoot) ? readdirSync(cmakeRoot).filter((v) => /^\d+\.\d+/.test(v)).sort(byVersion)[0] : undefined;
+  const props = [`sdk.dir=${sdk.replace(/\\/g, '/')}`];
+  if (cmake) props.push(`cmake.dir=${path.join(cmakeRoot, cmake).replace(/\\/g, '/')}`);
+  writeFileSync(path.join(root, 'android', 'local.properties'), props.join('\n') + '\n');
+  if (win && (!cmake || byVersion('3.24.0', cmake) < 0)) {
+    console.log('  note: install a newer CMake (Android Studio → SDK Manager → SDK Tools → CMake) if the build fails on long paths');
+  }
+  console.log(`  CMake ${cmake ?? '(from Gradle default)'}`);
+
+  step('Building the release APK (15-40 minutes the first time)');
+  run(path.join(root, 'android', win ? 'gradlew.bat' : 'gradlew'), [
     'assembleRelease',
     '-PreactNativeArchitectures=arm64-v8a',
     `-Pandroid.injected.signing.store.file=${keystore}`,

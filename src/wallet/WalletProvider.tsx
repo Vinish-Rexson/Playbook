@@ -7,7 +7,7 @@ import type { Address, Hex } from 'viem';
 
 import { base64 } from '@scure/base';
 
-import type { SignRequest } from './describe';
+import type { SignRequest, SwapSummary } from './describe';
 import {
   addSolanaIfMissing,
   authenticate,
@@ -60,8 +60,11 @@ export type Wallet = {
   signSolanaTransaction: (messageB64: string, opts?: SendOpts & { recipient?: string }) => Promise<string>;
 };
 
-/** auth: prompt shown for the fingerprint / PIN check after the sheet is confirmed. */
-type SendOpts = { auth?: string };
+/**
+ * auth: prompt shown for the fingerprint / PIN check after the sheet is confirmed.
+ * swap: the Uniswap quote, shown on the sheet when the transaction calls the Uniswap Universal Router.
+ */
+type SendOpts = { auth?: string; swap?: SwapSummary };
 
 const WalletContext = createContext<Wallet | null>(null);
 
@@ -213,7 +216,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       },
       sendTransaction: async (tx, opts) => {
         const s = live();
-        await confirm({ kind: 'transaction', to: tx.to as Address, data: tx.data as Hex, value: tx.value ? tx.value.toString() : undefined });
+        await confirm({ kind: 'transaction', to: tx.to as Address, data: tx.data as Hex, value: tx.value ? tx.value.toString() : undefined, swap: opts?.swap });
         if (opts?.auth && !(await authenticate(opts.auth))) throw new Error('Not confirmed with your fingerprint or PIN.');
         return s.sendTransaction(tx);
       },

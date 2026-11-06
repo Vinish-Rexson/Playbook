@@ -2,7 +2,7 @@
   "expo": {
     "name": "Playbook",
     "slug": "Playbook",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "playbook",
@@ -20,7 +20,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.playbook.app",
-      "versionCode": 1
+      "versionCode": 3
     },
     "web": {
       "output": "server",

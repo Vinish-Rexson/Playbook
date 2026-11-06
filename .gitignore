@@ -49,3 +49,7 @@ data/
 /ios
 build-android.log
 expo-server.log
+
+.vercel
+.env*
+!.env.example

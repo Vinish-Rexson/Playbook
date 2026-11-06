@@ -12,6 +12,12 @@ export const CHAIN_ID_HEX = '0x2105';
 export const WETH = '0x4200000000000000000000000000000000000006' as const;
 export const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
 export const USDC_DECIMALS = 6;
+/** Uniswap Universal Router deployments on Base (in-app swaps must call one of these). */
+export const UNISWAP_ROUTERS = [
+  '0x6ff5693b99212da76ad316178a184ab56d299b43', // v4 Universal Router
+  '0xd6145b2d3f379919e8cdeda7b97e37c4b2ca9c40', // Universal Router 2.1.x
+  '0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad', // Universal Router 1.2
+];
 
 // Solana mints. Flash settles SOL as wrapped SOL (wSOL); bought SOL arrives as wSOL and the
 // take-profit / stop-loss sells it back to USDC.

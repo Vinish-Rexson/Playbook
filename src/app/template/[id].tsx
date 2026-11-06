@@ -13,7 +13,7 @@ import { useCandles } from '@/hooks/useCandles';
 import { useFetch } from '@/hooks/useFetch';
 import { usePrice } from '@/hooks/usePrice';
 import { api, type Timeframe } from '@/lib/api';
-import { runApply } from '@/lib/applyFlow';
+import { runApply, ShortOfUsdc } from '@/lib/applyFlow';
 import { fmtPrice } from '@/lib/chartMath';
 import { CHAINS, NETWORKS, playbookChains, type Chain } from '@/lib/constants';
 import { buildPlan, shortAddr, signedUsd, timeAgo, usd } from '@/lib/pricing';
@@ -44,6 +44,7 @@ export default function TemplateScreen() {
   const [steps, setSteps] = useState<StepView>(freshSteps());
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Application | null>(null);
+  const [missingUsdc, setMissingUsdc] = useState<number | null>(null);
 
   const amountUsd = Number(amount) || 0;
   const plan = useMemo(
@@ -56,6 +57,7 @@ export default function TemplateScreen() {
     setSteps(freshSteps());
     setError(null);
     setResult(null);
+    setMissingUsdc(null);
     setSheet(true);
     try {
       const position = await runApply({
@@ -74,6 +76,7 @@ export default function TemplateScreen() {
         return active ? { ...s, [active]: { state: 'error' } } : s;
       });
       setError(msg);
+      if (e instanceof ShortOfUsdc) setMissingUsdc(e.missingUsd);
     }
   };
 
@@ -270,6 +273,16 @@ export default function TemplateScreen() {
         templateName={t.name}
         chain={chain}
         onClose={() => setSheet(false)}
+        onGetUsdc={
+          missingUsdc !== null
+            ? () => {
+                setSheet(false);
+                // A little over the gap so price moves and rounding never leave it a cent short.
+                const want = (Math.ceil(missingUsdc * 100) / 100 + 0.01).toFixed(2);
+                router.push({ pathname: '/wallet/swap', params: { pay: 'ETH', get: 'USDC', want } });
+              }
+            : undefined
+        }
         onViewPosition={() => {
           setSheet(false);
           if (result) router.push({ pathname: '/position/[id]', params: { id: result.id } });

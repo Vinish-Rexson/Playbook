@@ -43,6 +43,7 @@ export function ApplySheet({
   chain,
   onClose,
   onViewPosition,
+  onGetUsdc,
 }: {
   visible: boolean;
   steps: StepView;
@@ -52,6 +53,8 @@ export function ApplySheet({
   chain: Chain;
   onClose: () => void;
   onViewPosition: () => void;
+  /** Shown when the wallet is short of USDC on Base: opens the Uniswap swap for the missing amount. */
+  onGetUsdc?: () => void;
 }) {
   useEffect(() => {
     if (result) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
@@ -111,7 +114,8 @@ export function ApplySheet({
                   </T>
                 </View>
               ) : null}
-              {!busy && <Button title="Close" variant="secondary" onPress={onClose} style={{ marginTop: space(4) }} />}
+              {!busy && onGetUsdc ? <Button title="Get USDC with Uniswap" onPress={onGetUsdc} style={{ marginTop: space(4) }} /> : null}
+              {!busy && <Button title="Close" variant="secondary" onPress={onClose} style={{ marginTop: onGetUsdc ? space(2) : space(4) }} />}
             </>
           )}
         </Animated.View>
