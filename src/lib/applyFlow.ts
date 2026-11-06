@@ -1,15 +1,18 @@
-// Client side of "Apply playbook": balance check → quote → approvals (first time only) → 2 signatures → submit.
-// Mirrors the Flash attached-bracket flow: one quote, sign the entry and the protection, one submit.
+// Client side of "Apply playbook". Mirrors the Flash attached-bracket flow: one quote, sign the entry and
+// the protection, one submit.
+//   Base:   balance check → quote → approvals (first time only) → 2 signatures → submit
+//   Solana: balance check → quote → one setup transaction (first time only) → 2 signatures → submit
 import type { Wallet } from '@/wallet/WalletProvider';
 
-import { api, type QuoteResult } from './api';
-import { balancesOf, waitForTx } from './chain';
+import { api, type BaseQuote, type QuoteResult, type SolanaQuote } from './api';
+import { balancesOf, solBalancesOf, waitForTx } from './chain';
+import { TOKEN_ACCOUNT_RENT_SOL, type Chain } from './constants';
 import type { Application } from './types';
 
-export type StepKey = 'quote' | 'approveUsdc' | 'approveWeth' | 'signEntry' | 'signProtect' | 'submit';
+export type StepKey = 'quote' | 'approveUsdc' | 'approveWeth' | 'setup' | 'signEntry' | 'signProtect' | 'submit';
 export type StepState = 'pending' | 'active' | 'done' | 'skipped' | 'error';
 
-export const STEPS: { key: StepKey; label: string }[] = [
+const BASE_STEPS: { key: StepKey; label: string }[] = [
   { key: 'quote', label: 'Get best price from Flash' },
   { key: 'approveUsdc', label: 'Allow USDC (first time only)' },
   { key: 'approveWeth', label: 'Allow ETH exits (first time only)' },
@@ -18,17 +21,36 @@ export const STEPS: { key: StepKey; label: string }[] = [
   { key: 'submit', label: 'Place order on Flash' },
 ];
 
+const SOLANA_STEPS: { key: StepKey; label: string }[] = [
+  { key: 'quote', label: 'Get best price from Flash' },
+  { key: 'setup', label: 'Set up USDC and SOL (first time only)' },
+  { key: 'signEntry', label: 'Sign the buy order' },
+  { key: 'signProtect', label: 'Sign take-profit + stop-loss' },
+  { key: 'submit', label: 'Place order on Flash' },
+];
+
+export const stepsFor = (chain: Chain) => (chain === 'solana' ? SOLANA_STEPS : BASE_STEPS);
+export const ALL_STEP_KEYS: StepKey[] = ['quote', 'approveUsdc', 'approveWeth', 'setup', 'signEntry', 'signProtect', 'submit'];
+
 type Report = (key: StepKey, state: StepState, detail?: string) => void;
 
-export async function runApply(opts: {
+type Opts = {
   templateId: string;
   amountUsd: number;
+  chain: Chain;
   wallet: Wallet;
   onStep: Report;
   onQuote?: (q: QuoteResult) => void;
-}): Promise<Application> {
+};
+
+export async function runApply(opts: Opts): Promise<Application> {
+  if (opts.wallet.mode !== 'live') throw new Error('Unlock your wallet first');
+  return opts.chain === 'solana' ? runSolana(opts) : runBase(opts);
+}
+
+async function runBase(opts: Opts): Promise<Application> {
   const { wallet, onStep } = opts;
-  if (!wallet.address || wallet.mode !== 'live') throw new Error('Unlock your wallet first');
+  if (!wallet.address) throw new Error('Unlock your wallet first');
 
   onStep('quote', 'active', 'Checking your balance…');
   const bal = await balancesOf(wallet.address);
@@ -39,7 +61,7 @@ export async function runApply(opts: {
   }
 
   onStep('quote', 'active');
-  const q = await api.quote({ templateId: opts.templateId, amountUsd: opts.amountUsd, funder: wallet.address });
+  const q = (await api.quote({ templateId: opts.templateId, amountUsd: opts.amountUsd, funder: wallet.address, chain: 'base' })) as BaseQuote;
   opts.onQuote?.(q);
   onStep('quote', 'done', q.priceImpact !== null ? `Price impact ${(q.priceImpact * 100).toFixed(2)}%` : undefined);
 
@@ -100,6 +122,56 @@ export async function runApply(opts: {
     bracketPermitSignature,
     approvalTxs,
   });
+  onStep('submit', 'done');
+  return position;
+}
+
+async function runSolana(opts: Opts): Promise<Application> {
+  const { wallet, onStep } = opts;
+  const funder = wallet.solAddress;
+  if (!funder) throw new Error('This wallet has no Solana account. Solana needs a wallet created or imported with a recovery phrase.');
+
+  onStep('quote', 'active', 'Checking your balance…');
+  const bal = await solBalancesOf(funder);
+  if (bal.usdc + 1e-9 < opts.amountUsd) {
+    throw new Error(
+      `You have ${bal.usdc.toFixed(2)} USDC on Solana and this needs ${opts.amountUsd.toFixed(2)}. Add USDC from Profile → Solana → Receive.`,
+    );
+  }
+
+  onStep('quote', 'active');
+  const q = (await api.quote({ templateId: opts.templateId, amountUsd: opts.amountUsd, funder, chain: 'solana' })) as SolanaQuote;
+  opts.onQuote?.(q);
+  onStep('quote', 'done', q.priceImpact !== null ? `Price impact ${(q.priceImpact * 100).toFixed(2)}%` : undefined);
+
+  const s = q.solana;
+  const approvalTxs: string[] = [];
+  if (s.setupNeeded) {
+    const needed = s.newTokenAccounts * TOKEN_ACCOUNT_RENT_SOL + 0.0001;
+    if (bal.sol < needed) {
+      throw new Error(`Add about ${Math.max(0.01, needed).toFixed(3)} SOL on Solana for the one-time setup (token accounts and fees).`);
+    }
+    onStep('setup', 'active');
+    const { message } = await api.solanaSetup(q.quoteId);
+    if (message) {
+      const signature = await wallet.signSolanaTransaction(message);
+      onStep('setup', 'active', 'Confirming on Solana…');
+      const { txId } = await api.solanaSend({ quoteId: q.quoteId, message, signature });
+      approvalTxs.push(txId);
+    }
+    onStep('setup', 'done');
+  } else onStep('setup', 'skipped', 'Already set up');
+
+  onStep('signEntry', 'active');
+  const userSignature = await wallet.signSolanaMessage(s.orderMessage);
+  onStep('signEntry', 'done', 'Free, no fee');
+
+  onStep('signProtect', 'active');
+  const bracketSignature = await wallet.signSolanaMessage(s.bracketOrderMessage);
+  onStep('signProtect', 'done', 'Free, no fee');
+
+  onStep('submit', 'active');
+  const { position } = await api.submit({ quoteId: q.quoteId, funder, userSignature, bracketSignature, approvalTxs });
   onStep('submit', 'done');
   return position;
 }

@@ -54,7 +54,7 @@ export default function Welcome() {
 
       <Animated.View entering={FadeInDown.delay(240).duration(500)} style={{ marginTop: space(7) }}>
         <Card style={{ gap: space(3) }}>
-          <T v="label">Your wallet · Base</T>
+          <T v="label">Your wallet · Base and Solana</T>
           <Button
             title="Create a new wallet"
             icon={<Plus size={20} color="#fff" />}

@@ -22,6 +22,8 @@ export type Template = {
   stopLossPct: number;
   /** Creator's cut, % of each applied trade (sent to Flash as flashIntegratorFeeBps). */
   cutPct: number;
+  /** Where it trades: ETH on Base, SOL on Solana, or both (the user picks when applying). */
+  chain: import('./constants').PlaybookNetwork;
   createdAt: number;
 };
 
@@ -46,6 +48,8 @@ export type TxRef = { label: string; hash: string };
 
 export type Application = {
   id: string;
+  /** Network the position runs on (ETH on Base or SOL on Solana). */
+  chain: import('./constants').Chain;
   templateId: string;
   templateName: string;
   creator: string;

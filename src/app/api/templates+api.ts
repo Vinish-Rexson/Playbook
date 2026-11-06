@@ -1,4 +1,4 @@
-import { MAX_CUT_PCT } from '@/lib/constants';
+import { MAX_CUT_PCT, type PlaybookNetwork } from '@/lib/constants';
 import { db, HOUSE } from '@/server/db';
 import { fail, isAddress, ok } from '@/server/http';
 import { withMeta, withMetaOne } from '@/server/meta';
@@ -12,6 +12,13 @@ export async function GET() {
   } catch (e) {
     return fail(e);
   }
+}
+
+/** New playbooks trade on one network ('both' only exists on the original starter playbooks). */
+function parseNetwork(v: unknown): PlaybookNetwork {
+  if (v === undefined || v === null || v === '') return 'base';
+  if (v === 'base' || v === 'solana') return v;
+  throw new Error('Pick Base or Solana');
 }
 
 const clamp = (n: unknown, min: number, max: number, label: string) => {
@@ -37,6 +44,7 @@ export async function POST(request: Request) {
       // Stop-loss is mandatory: every playbook protects the people who apply it.
       stopLossPct: clamp(b.stopLossPct, 0.1, 50, 'Stop-loss'),
       cutPct: clamp(b.cutPct, 0, MAX_CUT_PCT, 'Creator cut'),
+      chain: parseNetwork(b.chain),
     });
     return ok({ template: await withMetaOne(template) });
   } catch (e) {

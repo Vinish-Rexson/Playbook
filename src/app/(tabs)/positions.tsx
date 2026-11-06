@@ -8,7 +8,7 @@ import { ModeBadge } from '@/components/ModeBadge';
 import { StatusPill } from '@/components/Playbook';
 import { useFetch } from '@/hooks/useFetch';
 import { api } from '@/lib/api';
-import { txUrl } from '@/lib/constants';
+import { NETWORKS, txUrl } from '@/lib/constants';
 import { cancelMessageFor } from '@/lib/flashMessages';
 import { signedUsd, timeAgo, usd } from '@/lib/pricing';
 import type { Application, PositionStatus } from '@/lib/types';
@@ -61,7 +61,7 @@ function PositionCard({ p, onCancel }: { p: Application; onCancel: (p: Applicati
         <Pressable onPress={() => router.push({ pathname: '/template/[id]', params: { id: p.templateId } })} style={{ flex: 1 }}>
           <T v="h2">{p.templateName}</T>
           <T v="small">
-            {usd(p.amountUsd)} · {timeAgo(p.createdAt)}
+            {usd(p.amountUsd)} of {NETWORKS[p.chain].asset} on {NETWORKS[p.chain].name} · {timeAgo(p.createdAt)}
           </T>
         </Pressable>
         <StatusPill status={p.status} />
@@ -102,7 +102,7 @@ function PositionCard({ p, onCancel }: { p: Application; onCancel: (p: Applicati
       {p.txs.length > 0 ? (
         <Row gap={8} style={{ flexWrap: 'wrap', marginTop: space(3) }}>
           {p.txs.map((tx) => (
-            <Pressable key={tx.hash + tx.label} onPress={() => Linking.openURL(txUrl(tx.hash))}>
+            <Pressable key={tx.hash + tx.label} onPress={() => Linking.openURL(txUrl(tx.hash, p.chain))}>
               <Row gap={4}>
                 <T v="small" color={colors.cyan}>
                   {tx.label}
@@ -137,9 +137,11 @@ function PositionCard({ p, onCancel }: { p: Application; onCancel: (p: Applicati
 
 export default function Positions() {
   const w = useWallet();
+  const addresses = [w.address, w.solAddress].filter((a): a is string => !!a);
+  const key = addresses.join(',');
   const { data, loading, refreshing, reload, error } = useFetch(
-    () => (w.address ? api.positions(w.address) : Promise.resolve({ positions: [] })),
-    [w.address],
+    () => (key ? api.positions(key.split(',')) : Promise.resolve({ positions: [] })),
+    [key],
     5000,
   );
   const positions = data?.positions ?? [];
@@ -147,7 +149,9 @@ export default function Positions() {
   const realized = positions.reduce((s, p) => s + (p.status === 'take_profit' || p.status === 'stop_loss' ? p.pnlUsd ?? 0 : 0), 0);
 
   const cancel = async (p: Application) => {
-    const sig = await w.signMessage(cancelMessageFor(p.orderId));
+    const msg = cancelMessageFor(p.orderId);
+    // Same message on both networks; only the signature scheme differs (Cancelling Orders docs).
+    const sig = p.chain === 'solana' ? await w.signSolanaMessage(msg) : await w.signMessage(msg);
     await api.cancel(p.id, sig);
     reload();
   };

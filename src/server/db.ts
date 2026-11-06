@@ -3,10 +3,25 @@
 // `npm run db:push`. Server-only: reached from the API routes, never from the app bundle.
 import postgres from 'postgres';
 
+import type { Chain } from '@/lib/constants';
 import type { Application, ApplyPlan, Template, TemplateStats, Trader } from '@/lib/types';
+
+import type { FlashSvmIx } from './flash';
+
+/** Solana material from a Flash quote: the two order messages to sign and the one-time setup instructions. */
+export type PendingSvm = {
+  orderMessage: string;
+  nonce: string;
+  deadline: string;
+  bracketOrderMessage: string;
+  bracketNonce: string;
+  /** Token-account creation, then delegations (entry's spent asset, bracket's received asset), in that order. */
+  setupIxs: FlashSvmIx[];
+};
 
 export type PendingQuote = {
   quoteId: string;
+  chain: Chain;
   templateId: string;
   funder: string;
   body: Record<string, any>; // exact Flash quote request, re-used on submit
@@ -18,6 +33,7 @@ export type PendingQuote = {
     bracketOrder: string | null;
     bracketPermit: string | null;
   };
+  svm: PendingSvm | null;
   plan: ApplyPlan;
   createdAt: number;
 };
@@ -71,11 +87,13 @@ const toTemplate = (r: Row): Template => ({
   takeProfitPct: r.takeProfitPct,
   stopLossPct: r.stopLossPct,
   cutPct: r.cutPct,
+  chain: r.chain ?? 'both',
   createdAt: ms(r.createdAt),
 });
 const opt = <T>(v: T | null) => v ?? undefined;
 const toApplication = (r: Row): Application => ({
   id: r.id,
+  chain: r.chain,
   templateId: r.templateId,
   templateName: r.templateName,
   creator: r.creator,
@@ -112,7 +130,8 @@ const APP_PATCHABLE = [
   'closeReason',
 ] as const satisfies readonly (keyof Application)[];
 
-type AppFilter = { funder?: string; templateId?: string; creator?: string; limit?: number };
+/** `funders`: the wallet's addresses on each network (its Base and Solana address). */
+type AppFilter = { funders?: string[]; templateId?: string; creator?: string; limit?: number };
 
 export const db = {
   // traders
@@ -160,10 +179,14 @@ export const db = {
   // applications (positions)
   async listApplications(f: AppFilter = {}) {
     const s = sql();
+    // Base addresses match case-insensitively; Solana's base58 addresses are case-sensitive.
+    const evm = (f.funders ?? []).filter((a) => a.startsWith('0x')).map(lc);
+    const sol = (f.funders ?? []).filter((a) => !a.startsWith('0x'));
     const rows = await s`
       select * from applications
       where true
-        ${f.funder ? s`and lower(funder) = ${lc(f.funder)}` : s``}
+        ${f.funders ? s`and ((chain = 'base' and lower(funder) in ${s(evm.length ? evm : [''])})
+                          or (chain = 'solana' and funder in ${s(sol.length ? sol : [''])}))` : s``}
         ${f.templateId ? s`and template_id = ${f.templateId}` : s``}
         ${f.creator ? s`and creator = ${lc(f.creator)}` : s``}
       order by created_at desc
@@ -203,10 +226,17 @@ export const db = {
     const s = sql();
     await s`delete from quotes where created_at < ${new Date(Date.now() - QUOTE_TTL_MS)}`;
     await s`
-      insert into quotes (quote_id, template_id, funder, body, bracket, typed, plan, created_at)
-      values (${q.quoteId}, ${q.templateId}, ${q.funder}, ${s.json(q.body)}, ${q.bracket ? s.json(q.bracket) : null},
-              ${s.json(q.typed)}, ${s.json(q.plan)}, ${new Date(q.createdAt)})
+      insert into quotes (quote_id, chain, template_id, funder, body, bracket, typed, svm, plan, created_at)
+      values (${q.quoteId}, ${q.chain}, ${q.templateId}, ${q.funder}, ${s.json(q.body)},
+              ${q.bracket ? s.json(q.bracket) : null}, ${s.json(q.typed)}, ${q.svm ? s.json(q.svm) : null},
+              ${s.json(q.plan)}, ${new Date(q.createdAt)})
       on conflict (quote_id) do nothing`;
+  },
+  /** Reads a quote without using it up (the Solana setup step happens before submit). */
+  async getQuote(quoteId: string): Promise<PendingQuote | null> {
+    const [r] = await sql()`select * from quotes where quote_id = ${quoteId}`;
+    if (!r || ms(r.createdAt) < Date.now() - QUOTE_TTL_MS) return null;
+    return { ...(r as PendingQuote), createdAt: ms(r.createdAt) };
   },
   /** Removes and returns a quote, so each one can be submitted once. Expired quotes come back null. */
   async takeQuote(quoteId: string): Promise<PendingQuote | null> {

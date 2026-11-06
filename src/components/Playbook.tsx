@@ -8,12 +8,19 @@ import { Avatar, Card, Chip, Pill, Row } from '@/ui/primitives';
 import { T } from '@/ui/Text';
 import { colors, radius, space } from '@/ui/theme';
 
-export function RuleChips({ t }: { t: Pick<TemplateWithMeta, 'entryOffsetPct' | 'takeProfitPct' | 'stopLossPct'> }) {
+const NETWORK_LABEL = { both: 'Base · Solana', base: 'ETH · Base', solana: 'SOL · Solana' } as const;
+
+export function RuleChips({
+  t,
+}: {
+  t: Pick<TemplateWithMeta, 'entryOffsetPct' | 'takeProfitPct' | 'stopLossPct'> & Partial<Pick<TemplateWithMeta, 'chain'>>;
+}) {
   return (
     <Row gap={6} style={{ flexWrap: 'wrap' }}>
       <Chip tone="primary" label={t.entryOffsetPct < 0 ? `Buy ${pct(t.entryOffsetPct)}` : 'Buy now'} />
       <Chip tone="profit" label={`TP ${pct(t.takeProfitPct)}`} />
       <Chip tone="loss" label={`SL ${pct(-t.stopLossPct)}`} />
+      {t.chain ? <Chip label={NETWORK_LABEL[t.chain]} /> : null}
     </Row>
   );
 }
@@ -61,7 +68,7 @@ export function TemplateCard({ t, onPress }: { t: TemplateWithMeta; onPress: () 
 }
 
 /** Vertical price ladder: take-profit, entry, now and stop-loss placed to scale. */
-export function PriceLadder({ now, entry, tp, sl }: { now: number; entry: number; tp: number; sl: number }) {
+export function PriceLadder({ now, entry, tp, sl, asset = 'ETH' }: { now: number; entry: number; tp: number; sl: number; asset?: string }) {
   const hi = Math.max(tp, now);
   const lo = Math.min(sl, now);
   const span = hi - lo || 1;
@@ -96,7 +103,7 @@ export function PriceLadder({ now, entry, tp, sl }: { now: number; entry: number
         {entry !== now && (
           <Row style={[st.markRow, { top: y(now) - 11 }]}>
             <T v="small" color={colors.textMute}>
-              ETH now
+              {asset} now
             </T>
             <T v="small" color={colors.textMute}>
               {usd(now)}
@@ -133,6 +140,7 @@ export function Stepper({
   max,
   format,
   tone = colors.text,
+  sub,
 }: {
   label: string;
   hint?: string;
@@ -143,6 +151,8 @@ export function Stepper({
   max: number;
   format: (v: number) => string;
   tone?: string;
+  /** Second line under the value, e.g. the real price this rule means right now. */
+  sub?: string;
 }) {
   const set = (v: number) => onChange(Math.min(max, Math.max(min, Math.round(v * 100) / 100)));
   return (
@@ -154,9 +164,16 @@ export function Stepper({
       <Pressable hitSlop={8} onPress={() => set(value - step)} style={st.stepBtn}>
         <Minus size={18} color={colors.text} />
       </Pressable>
-      <T v="num" color={tone} style={{ minWidth: 74, textAlign: 'center', fontSize: 18 }}>
-        {format(value)}
-      </T>
+      <View style={{ minWidth: 86, alignItems: 'center' }}>
+        <T v="num" color={tone} style={{ textAlign: 'center', fontSize: 18 }}>
+          {format(value)}
+        </T>
+        {sub ? (
+          <T v="small" style={{ textAlign: 'center', fontSize: 11 }}>
+            {sub}
+          </T>
+        ) : null}
+      </View>
       <Pressable hitSlop={8} onPress={() => set(value + step)} style={st.stepBtn}>
         <Plus size={18} color={colors.text} />
       </Pressable>

@@ -86,7 +86,7 @@ export default function Profile() {
       )}
 
       <T v="small" style={{ textAlign: 'center', marginTop: space(2) }}>
-        Trades execute on Base through Definitive Flash.
+        Trades execute on Base and Solana through Definitive Flash.
         {price?.devKey ? '\nDev mode: using the public Flash dev key, creator fees are not collected.' : ''}
       </T>
     </Screen>

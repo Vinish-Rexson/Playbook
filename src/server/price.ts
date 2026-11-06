@@ -1,15 +1,21 @@
-import { searchWethPrice } from './flash';
+import type { Chain } from '@/lib/constants';
 
-let cached: { price: number; change24h: number; at: number } | null = null;
+import { searchPrice } from './flash';
 
-/** WETH/USD from Flash search, cached for 10s so screens can poll freely. */
-export async function ethPrice() {
-  if (cached && Date.now() - cached.at < 10_000) return cached;
+type Cached = { price: number; change24h: number; at: number };
+const cache = new Map<Chain, Cached>();
+
+/** USD price of what playbooks buy on a chain (WETH on Base, SOL on Solana), cached 10s so screens can poll freely. */
+export async function priceOf(chain: Chain): Promise<Cached> {
+  const hit = cache.get(chain);
+  if (hit && Date.now() - hit.at < 10_000) return hit;
   try {
-    const p = await searchWethPrice();
-    cached = { ...p, at: Date.now() };
+    const p = await searchPrice(chain);
+    cache.set(chain, { ...p, at: Date.now() });
   } catch (e) {
-    if (!cached) throw e; // keep serving the last good price if Flash hiccups
+    if (!hit) throw e; // keep serving the last good price if Flash hiccups
   }
-  return cached!;
+  return cache.get(chain)!;
 }
+
+export const ethPrice = () => priceOf('base');

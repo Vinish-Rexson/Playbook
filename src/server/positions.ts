@@ -31,7 +31,7 @@ async function refreshLive(app: Application) {
   const entry = await getOrder(app.orderId, app.funder);
   const o = entry.order;
   const txs: TxRef[] = [
-    ...app.txs.filter((t) => t.label === 'Approval'),
+    ...app.txs.filter((t) => t.label === 'Approval' || t.label === 'Setup'),
     ...entry.fills.map((f, i) => ({ label: entry.fills.length > 1 ? `Buy fill ${i + 1}` : 'Bought ETH', hash: f.transactionId })),
   ];
   let creatorFeeUsd = sumFees(entry);

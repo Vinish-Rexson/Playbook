@@ -1,12 +1,15 @@
-// One wallet interface for the whole app, backed by the built-in self-custodial wallet
-// (live trades on Base, keys on this phone).
+// One wallet interface for the whole app, backed by the built-in self-custodial wallet.
+// One recovery phrase, two accounts (like MetaMask): Ethereum on Base and Solana. Keys stay on this phone.
 import * as SecureStore from 'expo-secure-store';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import type { Address, Hex } from 'viem';
 
+import { base64 } from '@scure/base';
+
 import type { SignRequest } from './describe';
 import {
+  addSolanaIfMissing,
   authenticate,
   deleteWallet,
   deviceHasLock,
@@ -16,9 +19,11 @@ import {
   saveMeta,
   saveWallet,
   type SecretKind,
+  type StoredSecret,
   type WalletMeta,
 } from './keys';
 import { makeSigner, type Signer } from './signer';
+import { makeSolanaSigner, type SolanaSigner } from './solanaKeys';
 import { SignSheet } from './SignSheet';
 
 export type WalletMode = 'live';
@@ -29,7 +34,10 @@ export type Wallet = {
   ready: boolean;
   status: WalletStatus;
   mode: WalletMode | null;
+  /** Ethereum account (Base). Also the creator identity for published playbooks. */
   address: Address | null;
+  /** Solana account from the same phrase; null for wallets imported from an Ethereum private key. */
+  solAddress: string | null;
   meta: WalletMeta | null;
   deviceSecure: boolean;
   createWallet: (mnemonic: string, backedUp: boolean) => Promise<void>;
@@ -42,6 +50,10 @@ export type Wallet = {
   signTypedData: (json: string) => Promise<string>;
   signMessage: (message: string) => Promise<string>;
   sendTransaction: (tx: { to: string; data: string }) => Promise<Hex>;
+  /** Solana: Ed25519 over a UTF-8 message (Flash orders and cancels); base58 signature. */
+  signSolanaMessage: (message: string) => Promise<string>;
+  /** Solana: signs a base64 transaction message after the user confirms it; base58 signature. */
+  signSolanaTransaction: (messageB64: string) => Promise<string>;
 };
 
 const WalletContext = createContext<Wallet | null>(null);
@@ -66,8 +78,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [loaded, setLoaded] = useState(false);
   const [deviceSecure, setDeviceSecure] = useState(true);
   const [pending, setPending] = useState<Pending | null>(null);
-  // The unlocked key lives only in memory, never in React state or storage outside SecureStore.
+  // Unlocked keys live only in memory, never in React state or storage outside SecureStore.
   const signer = useRef<Signer | null>(null);
+  const solSigner = useRef<SolanaSigner | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -79,27 +92,34 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     })();
   }, []);
 
+  const forget = useCallback(() => {
+    signer.current = null;
+    solSigner.current = null;
+  }, []);
+
   useEffect(() => {
     let hiddenAt = 0;
     const sub = AppState.addEventListener('change', (s) => {
       if (s === 'background') hiddenAt = Date.now();
       if (s === 'active') {
         if (hiddenAt && Date.now() - hiddenAt > AUTO_LOCK_MS && signer.current) {
-          signer.current = null;
+          forget();
           setUnlocked(false);
         }
         hiddenAt = 0;
       }
     });
     return () => sub.remove();
-  }, []);
+  }, [forget]);
 
   const status: WalletStatus = !loaded ? 'loading' : meta ? (unlocked ? 'unlocked' : 'locked') : 'none';
   const mode: WalletMode | null = status === 'unlocked' ? 'live' : null;
   const address: Address | null = meta ? meta.address : null;
+  const solAddress: string | null = meta?.solAddress ?? null;
 
-  const activate = useCallback((m: WalletMeta, privateKey: Hex) => {
-    signer.current = makeSigner(privateKey);
+  const activate = useCallback((m: WalletMeta, stored: StoredSecret) => {
+    signer.current = makeSigner(stored.privateKey);
+    solSigner.current = stored.solSecret ? makeSolanaSigner(stored.solSecret) : null;
     setMeta(m);
     setUnlocked(true);
   }, []);
@@ -116,33 +136,40 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       if (!s) throw new Error('Unlock your wallet first.');
       return s;
     };
+    const sol = () => {
+      const s = solSigner.current;
+      if (!s) throw new Error(signer.current ? 'This wallet has no Solana account.' : 'Unlock your wallet first.');
+      return s;
+    };
     return {
       ready: loaded,
       status,
       mode,
       address,
+      solAddress,
       meta,
       deviceSecure,
       createWallet: async (mnemonic, backedUp) => {
         const r = await saveWallet({ kind: 'mnemonic', mnemonic }, backedUp);
-        activate(r.meta, r.privateKey);
+        activate(r.meta, r.stored);
       },
       importWallet: async (input) => {
         const p = parseSecret(input);
         if (!p.ok) throw new Error(p.reason || 'Enter a recovery phrase or private key');
         const r = await saveWallet(p, true);
-        activate(r.meta, r.privateKey);
+        activate(r.meta, r.stored);
       },
       unlock: async () => {
         if (!(await authenticate('Unlock your Playbook wallet'))) return false;
         const s = await loadSecret();
-        if (!s) throw new Error('The wallet key is missing from this phone. Import it again with your recovery phrase.');
-        signer.current = makeSigner(s.privateKey);
-        setUnlocked(true);
+        if (!s || !meta) throw new Error('The wallet key is missing from this phone. Import it again with your recovery phrase.');
+        // Wallets made before Solana support get their Solana account here, once.
+        const r = await addSolanaIfMissing(s, meta);
+        activate(r.meta, r.stored);
         return true;
       },
       lock: () => {
-        signer.current = null;
+        forget();
         setUnlocked(false);
       },
       revealSecret: async () => {
@@ -162,7 +189,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       removeWallet: async () => {
         if (!(await authenticate('Remove the wallet from this phone'))) return false;
         await deleteWallet();
-        signer.current = null;
+        forget();
         setUnlocked(false);
         setMeta(null);
         return true;
@@ -182,8 +209,18 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         await confirm({ kind: 'transaction', to: tx.to as Address, data: tx.data as Hex });
         return s.sendTransaction(tx);
       },
+      signSolanaMessage: async (message) => {
+        const s = sol();
+        await confirm({ kind: 'solMessage', message });
+        return s.signMessage(message);
+      },
+      signSolanaTransaction: async (messageB64) => {
+        const s = sol();
+        await confirm({ kind: 'solTransaction', message: messageB64 });
+        return s.signBytes(base64.decode(messageB64));
+      },
     };
-  }, [loaded, status, mode, address, meta, deviceSecure, activate, confirm]);
+  }, [loaded, status, mode, address, solAddress, meta, deviceSecure, activate, confirm, forget]);
 
   return (
     <WalletContext.Provider value={value}>
@@ -191,6 +228,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       <SignSheet
         request={pending}
         from={status === 'unlocked' ? address : null}
+        solFrom={status === 'unlocked' ? solAddress : null}
         onApprove={() => {
           pending?.resolve();
           setPending(null);

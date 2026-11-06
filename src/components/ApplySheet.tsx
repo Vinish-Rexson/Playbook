@@ -4,7 +4,8 @@ import { useEffect } from 'react';
 import { ActivityIndicator, Modal, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown, ZoomIn } from 'react-native-reanimated';
 
-import { STEPS, type StepKey, type StepState } from '@/lib/applyFlow';
+import { ALL_STEP_KEYS, stepsFor, type StepKey, type StepState } from '@/lib/applyFlow';
+import { NETWORKS, type Chain } from '@/lib/constants';
 import { usd } from '@/lib/pricing';
 import type { Application } from '@/lib/types';
 import { Button, Row } from '@/ui/primitives';
@@ -14,7 +15,7 @@ import { colors, radius, space } from '@/ui/theme';
 export type StepView = Record<StepKey, { state: StepState; detail?: string }>;
 
 export const freshSteps = (): StepView =>
-  Object.fromEntries(STEPS.map((s) => [s.key, { state: 'pending' as StepState }])) as StepView;
+  Object.fromEntries(ALL_STEP_KEYS.map((k) => [k, { state: 'pending' as StepState }])) as StepView;
 
 function StepIcon({ state }: { state: StepState }) {
   if (state === 'active') return <ActivityIndicator size="small" color={colors.cyan} />;
@@ -39,6 +40,7 @@ export function ApplySheet({
   error,
   result,
   templateName,
+  chain,
   onClose,
   onViewPosition,
 }: {
@@ -47,6 +49,7 @@ export function ApplySheet({
   error: string | null;
   result: Application | null;
   templateName: string;
+  chain: Chain;
   onClose: () => void;
   onViewPosition: () => void;
 }) {
@@ -69,7 +72,8 @@ export function ApplySheet({
                 Playbook applied
               </T>
               <T v="body" style={{ textAlign: 'center' }}>
-                {templateName} is running on {usd(result.amountUsd)}.{' '}
+                {templateName} is running on {usd(result.amountUsd)} of {NETWORKS[result.chain].asset} on{' '}
+                {NETWORKS[result.chain].name}.{' '}
                 {result.orderType === 'market' ? 'Buying now' : `Buying at ${usd(result.entryPrice)}`}, protected by a
                 take-profit at {usd(result.takeProfitPrice)} and a stop at {usd(result.stopLossPrice)}.
               </T>
@@ -78,11 +82,11 @@ export function ApplySheet({
             </Animated.View>
           ) : (
             <>
-              <T v="label">Applying</T>
+              <T v="label">Applying · {NETWORKS[chain].asset} on {NETWORKS[chain].name}</T>
               <T v="h2" style={{ marginTop: 4, marginBottom: space(4) }}>
                 {templateName}
               </T>
-              {STEPS.map((s) => {
+              {stepsFor(chain).map((s) => {
                 const v = steps[s.key];
                 return (
                   <Row key={s.key} gap={12} style={st.stepRow}>

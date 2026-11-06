@@ -2,7 +2,7 @@ import { router } from 'expo-router';
 import { ActivityIndicator, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
-import { EthTicker } from '@/components/EthTicker';
+import { MarketCard } from '@/components/charts/MarketCard';
 import { ModeBadge } from '@/components/ModeBadge';
 import { TemplateCard } from '@/components/Playbook';
 import { useFetch } from '@/hooks/useFetch';
@@ -21,7 +21,7 @@ export default function Discover() {
         <ModeBadge />
       </Row>
 
-      <EthTicker />
+      <MarketCard />
 
       <Row style={{ justifyContent: 'space-between', marginTop: space(8), marginBottom: space(3) }}>
         <T v="h2">Top playbooks</T>

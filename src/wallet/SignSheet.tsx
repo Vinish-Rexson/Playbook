@@ -7,30 +7,38 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { formatEther, type Address } from 'viem';
 
 import { usePrice } from '@/hooks/usePrice';
-import { publicClient } from '@/lib/chain';
+import { publicClient, solBalancesOf } from '@/lib/chain';
 import { shortAddr, usd } from '@/lib/pricing';
 import { Button, Divider, KV, Row } from '@/ui/primitives';
 import { T } from '@/ui/Text';
 import { colors, radius, space } from '@/ui/theme';
 
-import { describe, type SignRequest } from './describe';
+import { describe, isSolanaRequest, solanaTxCost, type SignRequest } from './describe';
 
-type Fee = { eth: number; enough: boolean } | { error: string };
+/** amount: fee in the network's gas token (ETH or SOL); rent: Solana token-account rent included in amount. */
+type Fee = { amount: number; rent: number; enough: boolean } | { error: string };
 
-function useNetworkFee(req: SignRequest, from: Address) {
+function useNetworkFee(req: SignRequest, from: string) {
   const [fee, setFee] = useState<Fee | null>(null);
   useEffect(() => {
-    if (req.kind !== 'transaction') return;
+    if (req.kind !== 'transaction' && req.kind !== 'solTransaction') return;
     let off = false;
     (async () => {
       try {
+        if (req.kind === 'solTransaction') {
+          const cost = solanaTxCost(req.message);
+          const bal = await solBalancesOf(from);
+          if (!off) setFee({ amount: cost.totalSol, rent: cost.rentSol, enough: bal.sol >= cost.totalSol });
+          return;
+        }
+        const account = from as Address;
         const [gas, fees, balance] = await Promise.all([
-          publicClient.estimateGas({ account: from, to: req.to, data: req.data }),
+          publicClient.estimateGas({ account, to: req.to, data: req.data }),
           publicClient.estimateFeesPerGas(),
-          publicClient.getBalance({ address: from }),
+          publicClient.getBalance({ address: account }),
         ]);
         const wei = gas * (fees.maxFeePerGas ?? 0n);
-        if (!off) setFee({ eth: Number(formatEther(wei)), enough: balance >= wei });
+        if (!off) setFee({ amount: Number(formatEther(wei)), rent: 0, enough: balance >= wei });
       } catch {
         if (!off) setFee({ error: 'Could not estimate the network fee.' });
       }
@@ -49,13 +57,16 @@ function SignBody({
   onReject,
 }: {
   req: SignRequest;
-  from: Address;
+  from: string;
   onApprove: () => void;
   onReject: () => void;
 }) {
   const d = describe(req);
+  const sol = isSolanaRequest(req);
+  const gas = sol ? 'SOL' : 'ETH';
+  const isTx = req.kind === 'transaction' || req.kind === 'solTransaction';
   const fee = useNetworkFee(req, from);
-  const price = usePrice();
+  const price = usePrice(sol ? 'solana' : 'base');
   const Icon = d.icon === 'approve' ? ShieldCheck : d.icon === 'sign' ? PenLine : MessageSquareText;
   const noGas = fee && 'enough' in fee && !fee.enough;
 
@@ -79,20 +90,23 @@ function SignBody({
 
       {d.rows.length || req.kind !== 'typedData' ? (
         <View style={st.details}>
-          {d.rows.map((r) => (
-            <KV key={r.k} k={r.k} v={r.v} />
+          {d.rows.map((r, i) => (
+            <KV key={`${i}-${r.k}`} k={r.k} v={r.v} />
           ))}
-          {req.kind === 'transaction' ? (
+          {isTx ? (
             <>
               {d.rows.length ? <Divider /> : null}
+              {fee && 'rent' in fee && fee.rent > 0 ? (
+                <KV k="Account deposit (rent)" v={`${fee.rent.toFixed(5)} SOL${price ? ` · ${usd(fee.rent * price.price)}` : ''}`} />
+              ) : null}
               <KV
-                k="Network fee"
+                k={fee && 'rent' in fee && fee.rent > 0 ? 'Total cost' : 'Network fee'}
                 v={
                   !fee
                     ? 'Estimating…'
                     : 'error' in fee
                       ? 'Unknown'
-                      : `${fee.eth.toFixed(6)} ETH${price ? ` · ${usd(fee.eth * price.price)}` : ''}`
+                      : `${fee.amount.toFixed(6)} ${gas}${price ? ` · ${usd(fee.amount * price.price)}` : ''}`
                 }
                 color={noGas ? colors.loss : undefined}
               />
@@ -113,7 +127,9 @@ function SignBody({
           <TriangleAlert size={18} color={colors.warn} />
           <T v="small" color={colors.warn} style={{ flex: 1 }}>
             {noGas
-              ? 'Not enough ETH on Base for the network fee. Add a little ETH to this wallet first.'
+              ? sol
+                ? 'Not enough SOL for this setup. Add about 0.01 SOL to your Solana address first (Profile → Solana → Receive).'
+                : 'Not enough ETH on Base for the network fee. Add a little ETH to this wallet first.'
               : d.warning ?? (fee && 'error' in fee ? `${fee.error} The transaction may fail.` : '')}
           </T>
         </Row>
@@ -122,14 +138,14 @@ function SignBody({
       <Row gap={12} style={{ marginTop: space(5) }}>
         <Button title="Reject" variant="secondary" onPress={onReject} style={{ flex: 1 }} />
         <Button
-          title={req.kind === 'transaction' ? 'Confirm' : 'Sign'}
+          title={isTx ? 'Confirm' : 'Sign'}
           onPress={onApprove}
           disabled={!!noGas}
           style={{ flex: 1 }}
         />
       </Row>
       <T v="small" color={colors.textMute} style={{ textAlign: 'center', marginTop: space(3) }}>
-        Signed on this phone by your wallet {shortAddr(from)}
+        Signed on this phone by your {sol ? 'Solana' : 'Base'} account {shortAddr(from)}
       </T>
     </Animated.View>
   );
@@ -138,23 +154,26 @@ function SignBody({
 export function SignSheet({
   request,
   from,
+  solFrom,
   onApprove,
   onReject,
 }: {
   request: { id: number; req: SignRequest } | null;
   from: Address | null;
+  solFrom: string | null;
   onApprove: () => void;
   onReject: () => void;
 }) {
   useEffect(() => {
     if (request) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
   }, [request]);
+  const signer = request ? (isSolanaRequest(request.req) ? solFrom : from) : null;
 
   return (
-    <Modal visible={!!request && !!from} transparent animationType="fade" onRequestClose={onReject}>
+    <Modal visible={!!request && !!signer} transparent animationType="fade" onRequestClose={onReject}>
       <View style={st.overlay}>
-        {request && from ? (
-          <SignBody key={request.id} req={request.req} from={from} onApprove={onApprove} onReject={onReject} />
+        {request && signer ? (
+          <SignBody key={request.id} req={request.req} from={signer} onApprove={onApprove} onReject={onReject} />
         ) : null}
       </View>
     </Modal>

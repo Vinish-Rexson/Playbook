@@ -1,15 +1,33 @@
 // Turns raw wallet requests into a plain-language summary for the confirmation sheet.
 import { decodeFunctionData, erc20Abi, formatUnits, maxUint256, type Address, type Hex } from 'viem';
 
-import { USDC, USDC_DECIMALS, WETH } from '@/lib/constants';
+import { base64 } from '@scure/base';
+
+import {
+  FLASH_SOLANA_DELEGATE,
+  SOL_DECIMALS,
+  SOL_USDC,
+  TOKEN_ACCOUNT_RENT_SOL,
+  USDC,
+  USDC_DECIMALS,
+  WETH,
+  WSOL,
+} from '@/lib/constants';
 import { shortAddr } from '@/lib/pricing';
+import { associatedTokenAddress, decodeLegacyMessage, messageFeeLamports, PROGRAMS } from '@/lib/solanaTx';
 
 import { parseTypedData } from './typedData';
 
 export type SignRequest =
   | { kind: 'transaction'; to: Address; data: Hex }
   | { kind: 'typedData'; json: string }
-  | { kind: 'message'; message: string };
+  | { kind: 'message'; message: string }
+  /** Solana: Ed25519 over a UTF-8 message (Flash order or cancel). */
+  | { kind: 'solMessage'; message: string }
+  /** Solana: a base64 legacy transaction message to sign (the one-time setup). */
+  | { kind: 'solTransaction'; message: string };
+
+export const isSolanaRequest = (r: SignRequest) => r.kind === 'solMessage' || r.kind === 'solTransaction';
 
 export type Described = {
   icon: 'approve' | 'sign' | 'message';
@@ -110,7 +128,101 @@ function describeTypedData(json: string): Described {
   };
 }
 
+const SOL_TOKENS: Record<string, { symbol: string; decimals: number }> = {
+  [SOL_USDC]: { symbol: 'USDC', decimals: USDC_DECIMALS },
+  [WSOL]: { symbol: 'wSOL', decimals: SOL_DECIMALS },
+};
+
+/** Flash's Solana order message: "DFS|m=<spent mint>|t=<total in base units>|h=<hash>" (Solana Overview docs). */
+function describeSolMessage(message: string): Described {
+  const order = /^DFS\|m=([1-9A-HJ-NP-Za-km-z]+)\|t=(\d+)\|h=/.exec(message);
+  if (order) {
+    const tok = SOL_TOKENS[order[1]];
+    const amount = tok ? `${(Number(order[2]) / 10 ** tok.decimals).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${tok.symbol}` : `${order[2]} units`;
+    const sellsBought = order[1] === WSOL;
+    return {
+      icon: 'sign',
+      label: 'Signature request · Solana',
+      title: sellsBought ? 'Sign take-profit + stop-loss' : 'Sign order',
+      subtitle: sellsBought
+        ? 'Lets Definitive Flash sell up to this much SOL when your take-profit or stop-loss price is reached. Free, no fee.'
+        : 'Authorizes Definitive Flash to spend up to this amount at your playbook prices. Free, no fee.',
+      rows: [
+        { k: 'App', v: 'Definitive Flash' },
+        { k: sellsBought ? 'Sells up to' : 'Spends up to', v: amount },
+        { k: 'Token', v: tok?.symbol ?? shortAddr(order[1]) },
+        { k: 'Network', v: 'Solana' },
+      ],
+    };
+  }
+  if (message.startsWith('Definitive Flash v1 — Cancel Order')) {
+    return {
+      icon: 'message',
+      label: 'Signature request · Solana',
+      title: 'Cancel order',
+      subtitle: 'Asks Definitive Flash to cancel this waiting order. Free, moves no funds.',
+      rows: [{ k: 'Order', v: message.split('Order: ')[1] ?? '' }],
+    };
+  }
+  return {
+    icon: 'message',
+    label: 'Signature request · Solana',
+    title: 'Sign message',
+    subtitle: 'Proves you own this wallet. Free, moves no funds.',
+    rows: [],
+  };
+}
+
+/** What the setup transaction costs: network fee plus rent for any token accounts it creates. */
+export function solanaTxCost(messageB64: string) {
+  const m = decodeLegacyMessage(base64.decode(messageB64));
+  const created = m.instructions.filter((i) => i.programId === PROGRAMS.ata).length;
+  const feeSol = messageFeeLamports(m) / 1e9;
+  const rentSol = created * TOKEN_ACCOUNT_RENT_SOL;
+  return { feeSol, rentSol, totalSol: feeSol + rentSol, payer: m.feePayer };
+}
+
+function describeSolTransaction(messageB64: string): Described {
+  try {
+    const m = decodeLegacyMessage(base64.decode(messageB64));
+    const owner = m.feePayer;
+    const ataOf = new Map(
+      [SOL_USDC, WSOL].map((mint) => [associatedTokenAddress(owner, mint), SOL_TOKENS[mint].symbol] as const),
+    );
+    const rows: { k: string; v: string }[] = [];
+    let unknown = false;
+    for (const ix of m.instructions) {
+      if (ix.programId === PROGRAMS.computeBudget) continue;
+      if (ix.programId === PROGRAMS.ata) {
+        const mint = ix.accounts[3]?.pubkey ?? '';
+        rows.push({ k: `Create ${SOL_TOKENS[mint]?.symbol ?? shortAddr(mint)} account`, v: 'Token account' });
+      } else if ((ix.programId === PROGRAMS.token || ix.programId === PROGRAMS.token2022) && ix.data[0] === 4) {
+        const [source, delegate] = ix.accounts;
+        const who = delegate?.pubkey === FLASH_SOLANA_DELEGATE ? 'Definitive Flash' : shortAddr(delegate?.pubkey);
+        rows.push({ k: `Allow ${ataOf.get(source?.pubkey) ?? shortAddr(source?.pubkey)} trading`, v: who });
+        if (delegate?.pubkey !== FLASH_SOLANA_DELEGATE) unknown = true;
+      } else {
+        rows.push({ k: 'Call', v: shortAddr(ix.programId) });
+        unknown = true;
+      }
+    }
+    return {
+      icon: 'approve',
+      label: 'Transaction · Solana',
+      title: 'One-time setup',
+      subtitle:
+        'Creates the token accounts this trade needs and lets Definitive Flash trade USDC and SOL for you. Only needed the first time.',
+      rows,
+      warning: unknown ? 'This transaction does something Playbook did not expect. Only confirm if you started it.' : undefined,
+    };
+  } catch {
+    return { icon: 'approve', label: 'Transaction · Solana', title: 'Solana transaction', subtitle: 'Could not read this transaction.', rows: [], warning: 'Only confirm transactions you started in Playbook.' };
+  }
+}
+
 export function describe(req: SignRequest): Described {
+  if (req.kind === 'solMessage') return describeSolMessage(req.message);
+  if (req.kind === 'solTransaction') return describeSolTransaction(req.message);
   if (req.kind === 'transaction') return describeTx(req.to, req.data);
   if (req.kind === 'typedData') {
     try {

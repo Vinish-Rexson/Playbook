@@ -4,6 +4,6 @@ import { useWallet } from '@/wallet/WalletProvider';
 
 export function ModeBadge() {
   const w = useWallet();
-  if (w.mode === 'live') return <Pill label="Live · Base" color={colors.profit} />;
+  if (w.mode === 'live') return <Pill label="Live" color={colors.profit} />;
   return null;
 }

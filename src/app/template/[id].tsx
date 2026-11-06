@@ -6,12 +6,16 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { ApplySheet, freshSteps, type StepView } from '@/components/ApplySheet';
 import { ModeBadge } from '@/components/ModeBadge';
-import { PriceLadder, RuleChips, StatusPill } from '@/components/Playbook';
+import { NetworkSwitch } from '@/components/NetworkSwitch';
+import { TradeChart } from '@/components/charts/TradeChart';
+import { RuleChips, StatusPill } from '@/components/Playbook';
+import { useCandles } from '@/hooks/useCandles';
 import { useFetch } from '@/hooks/useFetch';
 import { usePrice } from '@/hooks/usePrice';
-import { api } from '@/lib/api';
+import { api, type Timeframe } from '@/lib/api';
+import { fmtPrice } from '@/lib/chartMath';
 import { runApply } from '@/lib/applyFlow';
-import { MIN_APPLY_USD } from '@/lib/constants';
+import { CHAINS, NETWORKS, playbookChains, type Chain } from '@/lib/constants';
 import { buildPlan, shortAddr, signedUsd, timeAgo, usd } from '@/lib/pricing';
 import type { Application } from '@/lib/types';
 import { Avatar, Button, Card, Divider, KV, Row, Screen } from '@/ui/primitives';
@@ -19,20 +23,27 @@ import { T } from '@/ui/Text';
 import { colors, fonts, radius, space } from '@/ui/theme';
 import { useWallet } from '@/wallet/WalletProvider';
 
-const AMOUNTS = [10, 25, 50, 100];
+const AMOUNTS = [1, 5, 10, 25];
 
 export default function TemplateScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const w = useWallet();
-  const price = usePrice();
   const { data, loading, reload } = useFetch(() => api.template(id), [id], 10_000);
-  const [amount, setAmount] = useState('25');
+  const t = data?.template;
+  // The playbook decides where it can trade; the user picks when it allows both.
+  const offered = playbookChains(t?.chain);
+  const [picked, setPicked] = useState<Chain | null>(null);
+  const chain: Chain = picked && offered.includes(picked) ? picked : t?.chain === 'solana' ? 'solana' : 'base';
+  const net = NETWORKS[chain];
+  const price = usePrice(chain);
+  const [tf, setTf] = useState<Timeframe>('1h');
+  const candles = useCandles(chain, tf);
+  const [amount, setAmount] = useState('5');
   const [sheet, setSheet] = useState(false);
   const [steps, setSteps] = useState<StepView>(freshSteps());
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Application | null>(null);
 
-  const t = data?.template;
   const amountUsd = Number(amount) || 0;
   const plan = useMemo(
     () => (t && price ? buildPlan(t, price.price, Math.max(amountUsd, 0)) : null),
@@ -49,6 +60,7 @@ export default function TemplateScreen() {
       const position = await runApply({
         templateId: t.id,
         amountUsd,
+        chain,
         wallet: w,
         onStep: (key, state, detail) => setSteps((s) => ({ ...s, [key]: { state, detail } })),
       });
@@ -120,17 +132,48 @@ export default function TemplateScreen() {
         ))}
       </Row>
 
+      <Animated.View entering={FadeInDown.delay(60).duration(400)} style={{ marginTop: space(5), gap: space(2) }}>
+        <T v="label">Trade on</T>
+        <NetworkSwitch
+          value={chain}
+          onChange={setPicked}
+          disabled={CHAINS.filter((c) => !offered.includes(c) || (c === 'solana' && !w.solAddress))}
+        />
+        {offered.length === 1 ? (
+          <T v="small">The creator set this playbook to {net.name} only.</T>
+        ) : null}
+        {!w.solAddress && offered.includes('solana') ? (
+          <T v="small">Solana needs a wallet created or imported with a recovery phrase.</T>
+        ) : null}
+      </Animated.View>
+
       <Animated.View entering={FadeInDown.delay(100).duration(400)}>
         <Card style={{ marginTop: space(4) }} glow>
           <Row style={{ justifyContent: 'space-between', marginBottom: space(3) }}>
-            <T v="label">If you apply now</T>
+            <T v="label">If you apply now · {net.asset}</T>
             <T v="small">{plan ? (plan.orderType === 'market' ? 'Market buy' : 'Limit buy') : ''}</T>
           </Row>
-          {plan ? (
-            <PriceLadder now={plan.marketPrice} entry={plan.entryPrice} tp={plan.takeProfitPrice} sl={plan.stopLossPrice} />
-          ) : (
-            <ActivityIndicator color={colors.cyan} />
-          )}
+          <TradeChart
+            candles={candles}
+            tf={tf}
+            onTf={setTf}
+            now={price?.price ?? null}
+            height={280}
+            levels={
+              plan
+                ? [
+                    { key: 'tp', price: plan.takeProfitPrice, label: `TP ${fmtPrice(plan.takeProfitPrice)}`, color: colors.profit },
+                    {
+                      key: 'entry',
+                      price: plan.entryPrice,
+                      label: plan.orderType === 'market' ? 'Buy now' : `Buy ${fmtPrice(plan.entryPrice)}`,
+                      color: colors.primary,
+                    },
+                    { key: 'sl', price: plan.stopLossPrice, label: `SL ${fmtPrice(plan.stopLossPrice)}`, color: colors.loss },
+                  ]
+                : []
+            }
+          />
         </Card>
       </Animated.View>
 
@@ -148,7 +191,7 @@ export default function TemplateScreen() {
               style={st.amountInput}
               selectionColor={colors.cyan}
             />
-            <T v="small">USDC</T>
+            <T v="small">USDC on {net.name}</T>
           </Row>
           <Row gap={8}>
             {AMOUNTS.map((a) => (
@@ -162,10 +205,10 @@ export default function TemplateScreen() {
               </Pressable>
             ))}
           </Row>
-          {plan && amountUsd >= MIN_APPLY_USD ? (
+          {plan && amountUsd > 0 ? (
             <>
               <Divider />
-              <KV k="You get about" v={`${plan.estEth.toFixed(5)} ETH`} />
+              <KV k="You get about" v={`${plan.estEth.toFixed(chain === 'solana' ? 4 : 5)} ${net.asset}`} />
               <KV k={`At take profit ${usd(plan.takeProfitPrice)}`} v={signedUsd(plan.profitAtTpUsd)} color={colors.profit} />
               <KV k={`At stop-loss ${usd(plan.stopLossPrice)}`} v={signedUsd(plan.lossAtSlUsd)} color={colors.loss} />
               <KV k={`Creator cut (${t.cutPct}%)`} v={usd(plan.creatorFeeUsd)} color={colors.cyan} />
@@ -173,17 +216,19 @@ export default function TemplateScreen() {
             </>
           ) : (
             <T v="small" style={{ marginTop: space(3) }}>
-              Minimum ${MIN_APPLY_USD}.
+              Enter an amount.
             </T>
           )}
           <Button
             title="Apply playbook"
             onPress={apply}
-            disabled={!plan || amountUsd < MIN_APPLY_USD}
+            disabled={!plan || amountUsd <= 0}
             style={{ marginTop: space(4) }}
           />
           <T v="small" style={{ textAlign: 'center', marginTop: space(2) }}>
-            Two free signatures. Funds stay in your wallet until Flash executes.
+            {chain === 'solana'
+              ? 'Two free signatures, plus a one-time setup on Solana. Funds stay in your wallet until Flash executes.'
+              : 'Two free signatures. Funds stay in your wallet until Flash executes.'}
           </T>
         </Card>
       </Animated.View>
@@ -218,6 +263,7 @@ export default function TemplateScreen() {
         error={error}
         result={result}
         templateName={t.name}
+        chain={chain}
         onClose={() => setSheet(false)}
         onViewPosition={() => {
           setSheet(false);

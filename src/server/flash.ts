@@ -66,7 +66,10 @@ export type FlashQuote = {
     permitTypedData: string | null;
     orderTypedData: string;
   } | null;
+  svm: FlashSvm | null;
+  setupTxs?: string[] | null;
   attachedBracket?: {
+    svm?: { orderMessage: string; nonce: string; delegateIx: FlashSvmIx | null } | null;
     evm: {
       approveTx: { to: string; data: string } | null;
       permitTypedData: string | null;
@@ -76,6 +79,22 @@ export type FlashQuote = {
     deadline: string;
     signedMaxFromAmount: string;
   } | null;
+};
+
+export type FlashSvmIx = {
+  programId: string;
+  accounts: { pubkey: string; isSigner: boolean; isWritable: boolean }[];
+  data: string;
+};
+
+/** Solana signing and funding material on a quote (Flash docs: Solana Overview). */
+export type FlashSvm = {
+  orderMessage: string;
+  nonce: string;
+  deadline: string;
+  ataSetupIxs: FlashSvmIx[] | null;
+  delegateIx: FlashSvmIx | null;
+  sponsoredDelegateTx: string | null;
 };
 
 export type FlashOrderStatus =
@@ -120,16 +139,20 @@ export type FlashOrderDetail = {
 export const getOrder = (orderId: string, funderAddress: string) =>
   flash<FlashOrderDetail>(`/orders/${orderId}`, { query: { funderAddress } });
 
-/** Current WETH price on Base via GET /search. */
-export async function searchWethPrice(): Promise<{ price: number; change24h: number }> {
+const PRICE_ASSET = {
+  base: { query: 'weth', address: '0x4200000000000000000000000000000000000006', label: 'WETH' },
+  solana: { query: 'sol', address: 'So11111111111111111111111111111111111111112', label: 'SOL' },
+} as const;
+
+/** Current price of the asset playbooks buy on a chain (WETH on Base, SOL on Solana) via GET /search. */
+export async function searchPrice(chain: 'base' | 'solana'): Promise<{ price: number; change24h: number }> {
+  const a = PRICE_ASSET[chain];
   const res = await flash<{ assets: { address: string; chain: string; price: string; priceChange24h?: string }[] }>(
     '/search',
-    { query: { query: 'weth', chain: 'base' } },
+    { query: { query: a.query, chain } },
   );
-  const weth = res.assets.find(
-    (a) => a.address.toLowerCase() === '0x4200000000000000000000000000000000000006',
-  );
-  const price = Number(weth?.price ?? 0);
-  if (!price) throw new FlashError(502, 'NO_PRICE', 'Flash returned no WETH price');
-  return { price, change24h: Number(weth?.priceChange24h ?? 0) };
+  const hit = res.assets.find((x) => x.address.toLowerCase() === a.address.toLowerCase());
+  const price = Number(hit?.price ?? 0);
+  if (!price) throw new FlashError(502, 'NO_PRICE', `Flash returned no ${a.label} price`);
+  return { price, change24h: Number(hit?.priceChange24h ?? 0) };
 }

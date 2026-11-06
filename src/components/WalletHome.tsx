@@ -8,10 +8,11 @@ import { Alert, Linking, Pressable, StyleSheet, View } from 'react-native';
 import QRCodeStyled from 'react-native-qrcode-styled';
 import Animated, { FadeIn } from 'react-native-reanimated';
 
+import { NetworkSwitch } from '@/components/NetworkSwitch';
 import { useFetch } from '@/hooks/useFetch';
 import { usePrice } from '@/hooks/usePrice';
-import { balancesOf } from '@/lib/chain';
-import { addressUrl } from '@/lib/constants';
+import { balancesOf, solBalancesOf } from '@/lib/chain';
+import { addressUrl, NETWORKS, type Chain } from '@/lib/constants';
 import { shortAddr, usd } from '@/lib/pricing';
 import { Card, Divider, Row } from '@/ui/primitives';
 import { T } from '@/ui/Text';
@@ -68,21 +69,36 @@ function SettingRow({ icon, title, sub, onPress, danger }: { icon: ReactNode; ti
   );
 }
 
+type Balances = { usdc: number; gas: number; bought: number };
+
+const loadBalances = async (chain: Chain, addr: string | null): Promise<Balances | null> => {
+  if (!addr) return null;
+  if (chain === 'solana') {
+    const b = await solBalancesOf(addr);
+    return { usdc: b.usdc, gas: b.sol, bought: b.wsol };
+  }
+  const b = await balancesOf(addr as `0x${string}`);
+  return { usdc: b.usdc, gas: b.eth, bought: b.weth };
+};
+
 export function WalletHome() {
   const w = useWallet();
-  const price = usePrice();
+  const [chain, setChain] = useState<Chain>('base');
+  const net = NETWORKS[chain];
+  const addr = chain === 'solana' ? w.solAddress : w.address;
+  const price = usePrice(chain);
   const [showQr, setShowQr] = useState(false);
   const [copied, setCopied] = useState(false);
-  const bal = useFetch(() => (w.address ? balancesOf(w.address) : Promise.resolve(null)), [w.address], 20_000);
+  const bal = useFetch(() => loadBalances(chain, addr), [chain, addr], 20_000);
 
   const p = price?.price ?? 0;
-  const total = bal.data ? bal.data.usdc + (bal.data.eth + bal.data.weth) * p : null;
+  const total = bal.data ? bal.data.usdc + (bal.data.gas + bal.data.bought) * p : null;
   const isPhrase = w.meta?.kind === 'mnemonic';
   const needsBackup = isPhrase && !w.meta?.backedUp;
 
   const copy = async () => {
-    if (!w.address) return;
-    await Clipboard.setStringAsync(w.address);
+    if (!addr) return;
+    await Clipboard.setStringAsync(addr);
     Haptics.selectionAsync().catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
@@ -91,71 +107,93 @@ export function WalletHome() {
   return (
     <>
       <Card glow>
-        <Row style={{ justifyContent: 'space-between' }}>
-          <T v="label">Wallet · Base</T>
-          <Pressable onPress={copy} hitSlop={8} style={st.addrPill}>
-            <T v="small" color={colors.textDim} style={{ fontFamily: 'Inter_500Medium' }}>
-              {shortAddr(w.address)}
-            </T>
-            {copied ? <Check size={13} color={colors.profit} /> : <Copy size={13} color={colors.textMute} />}
-          </Pressable>
-        </Row>
-        <T v="hero" style={{ marginTop: space(3) }}>
-          {total === null ? '—' : usd(total)}
-        </T>
-        <T v="small">{bal.error && !bal.data ? 'Could not load balances' : 'Total balance'}</T>
-
-        <Row style={{ justifyContent: 'space-around', marginTop: space(5) }}>
-          <Action
-            icon={<QrCode size={20} color={colors.cyan} />}
-            label="Receive"
-            active={showQr}
-            onPress={() => setShowQr((v) => !v)}
-          />
-          <Action icon={copied ? <Check size={20} color={colors.profit} /> : <Copy size={20} color={colors.cyan} />} label="Copy" onPress={copy} />
-          <Action
-            icon={<ExternalLink size={20} color={colors.cyan} />}
-            label="Explorer"
-            onPress={() => w.address && Linking.openURL(addressUrl(w.address))}
-          />
-        </Row>
-
-        {showQr && w.address ? (
-          <Animated.View entering={FadeIn} style={{ alignItems: 'center', marginTop: space(5), gap: space(3) }}>
-            <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 10 }}>
-              <QRCodeStyled data={w.address} pieceSize={6} padding={8} />
-            </View>
-            <T v="num" style={{ fontSize: 12, textAlign: 'center' }} color={colors.textDim}>
-              {w.address}
-            </T>
-            <T v="small" style={{ textAlign: 'center' }}>
-              Send USDC and a little ETH on the Base network only.
-            </T>
-          </Animated.View>
-        ) : null}
-
-        <Divider />
-        <TokenRow
-          symbol="USDC"
-          name="USD Coin"
-          color="#2775CA"
-          amount={bal.data ? bal.data.usdc.toFixed(2) : '…'}
-          value={bal.data ? usd(bal.data.usdc) : undefined}
+        <NetworkSwitch
+          value={chain}
+          showAsset={false}
+          onChange={(c) => {
+            setChain(c);
+            setShowQr(false);
+          }}
         />
-        <TokenRow
-          symbol="ETH"
-          name="For network fees"
-          color="#8A92B2"
-          amount={bal.data ? bal.data.eth.toFixed(5) : '…'}
-          value={bal.data && p ? usd(bal.data.eth * p) : undefined}
-        />
-        <TokenRow
-          symbol="WETH"
-          name="Bought by playbooks"
-          color={colors.primary}
-          amount={bal.data ? bal.data.weth.toFixed(5) : '…'}
-          value={bal.data && p ? usd(bal.data.weth * p) : undefined}
-        />
+        {!addr ? (
+          <View style={{ paddingVertical: space(5), gap: space(2) }}>
+            <T v="h2">No Solana account</T>
+            <T v="body">
+              This wallet was imported with an Ethereum private key, which has no Solana account. Wallets created or imported
+              with a recovery phrase get both, like MetaMask.
+            </T>
+          </View>
+        ) : (
+          <>
+            <Row style={{ justifyContent: 'space-between', marginTop: space(4) }}>
+              <T v="label">Wallet · {net.name}</T>
+              <Pressable onPress={copy} hitSlop={8} style={st.addrPill}>
+                <T v="small" color={colors.textDim} style={{ fontFamily: 'Inter_500Medium' }}>
+                  {shortAddr(addr)}
+                </T>
+                {copied ? <Check size={13} color={colors.profit} /> : <Copy size={13} color={colors.textMute} />}
+              </Pressable>
+            </Row>
+            <T v="hero" style={{ marginTop: space(3) }}>
+              {total === null ? '—' : usd(total)}
+            </T>
+            <T v="small">{bal.error && !bal.data ? 'Could not load balances' : `Total on ${net.name}`}</T>
+
+            <Row style={{ justifyContent: 'space-around', marginTop: space(5) }}>
+              <Action
+                icon={<QrCode size={20} color={colors.cyan} />}
+                label="Receive"
+                active={showQr}
+                onPress={() => setShowQr((v) => !v)}
+              />
+              <Action icon={copied ? <Check size={20} color={colors.profit} /> : <Copy size={20} color={colors.cyan} />} label="Copy" onPress={copy} />
+              <Action
+                icon={<ExternalLink size={20} color={colors.cyan} />}
+                label="Explorer"
+                onPress={() => Linking.openURL(addressUrl(addr, chain))}
+              />
+            </Row>
+
+            {showQr ? (
+              <Animated.View entering={FadeIn} style={{ alignItems: 'center', marginTop: space(5), gap: space(3) }}>
+                <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 10 }}>
+                  <QRCodeStyled data={addr} pieceSize={chain === 'solana' ? 5 : 6} padding={8} />
+                </View>
+                <T v="num" style={{ fontSize: 12, textAlign: 'center' }} color={colors.textDim}>
+                  {addr}
+                </T>
+                <T v="small" style={{ textAlign: 'center' }}>
+                  {chain === 'solana'
+                    ? 'Send USDC and a little SOL (about 0.02) on the Solana network only.'
+                    : 'Send USDC and a little ETH on the Base network only.'}
+                </T>
+              </Animated.View>
+            ) : null}
+
+            <Divider />
+            <TokenRow
+              symbol="USDC"
+              name="USD Coin"
+              color="#2775CA"
+              amount={bal.data ? bal.data.usdc.toFixed(2) : '…'}
+              value={bal.data ? usd(bal.data.usdc) : undefined}
+            />
+            <TokenRow
+              symbol={net.gas}
+              name="For network fees"
+              color={chain === 'solana' ? '#14F195' : '#8A92B2'}
+              amount={bal.data ? bal.data.gas.toFixed(chain === 'solana' ? 4 : 5) : '…'}
+              value={bal.data && p ? usd(bal.data.gas * p) : undefined}
+            />
+            <TokenRow
+              symbol={net.bought}
+              name="Bought by playbooks"
+              color={colors.primary}
+              amount={bal.data ? bal.data.bought.toFixed(chain === 'solana' ? 4 : 5) : '…'}
+              value={bal.data && p ? usd(bal.data.bought * p) : undefined}
+            />
+          </>
+        )}
       </Card>
 
       {needsBackup ? (
@@ -190,12 +228,12 @@ export function WalletHome() {
         <SettingRow
           icon={<Trash2 size={18} color={colors.loss} />}
           title="Remove from this phone"
-          sub="Funds stay on Base"
+          sub="Funds stay on Base and Solana"
           danger
           onPress={() =>
             Alert.alert(
               'Remove wallet?',
-              'Your funds stay on Base, but you will need your recovery phrase or private key to get back in. Make sure it is backed up.',
+              'Your funds stay on Base and Solana, but you will need your recovery phrase or private key to get back in. Make sure it is backed up.',
               [
                 { text: 'Cancel', style: 'cancel' },
                 {
