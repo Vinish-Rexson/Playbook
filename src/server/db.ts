@@ -1,5 +1,5 @@
 /// <reference types="node" />
-// Postgres store (Supabase). Tables live in the `playbook` schema: see supabase/migrations and
+// Postgres store (Supabase). Tables live in `public` with RLS on and no API access: see supabase/migrations and
 // `npm run db:push`. Server-only: reached from the API routes, never from the app bundle.
 import postgres from 'postgres';
 
@@ -117,21 +117,21 @@ type AppFilter = { funder?: string; templateId?: string; creator?: string; limit
 export const db = {
   // traders
   async getTrader(address: string) {
-    const [r] = await sql()`select * from playbook.traders where address = ${lc(address)}`;
+    const [r] = await sql()`select * from traders where address = ${lc(address)}`;
     return r ? toTrader(r) : null;
   },
   async getTraders(addresses: string[]) {
     if (!addresses.length) return new Map<string, Trader>();
-    const rows = await sql()`select * from playbook.traders where address in ${sql()(addresses.map(lc))}`;
+    const rows = await sql()`select * from traders where address in ${sql()(addresses.map(lc))}`;
     return new Map(rows.map((r) => [r.address as string, toTrader(r)]));
   },
   async listTraders() {
-    const rows = await sql()`select * from playbook.traders order by created_at`;
+    const rows = await sql()`select * from traders order by created_at`;
     return rows.map(toTrader);
   },
   async upsertTrader(t: Pick<Trader, 'address' | 'name' | 'handle' | 'bio' | 'avatar'>) {
     const [r] = await sql()`
-      insert into playbook.traders (address, name, handle, bio, avatar)
+      insert into traders (address, name, handle, bio, avatar)
       values (${lc(t.address)}, ${t.name}, ${t.handle}, ${t.bio}, ${t.avatar})
       on conflict (address) do update
         set name = excluded.name, handle = excluded.handle, bio = excluded.bio, avatar = excluded.avatar
@@ -142,17 +142,17 @@ export const db = {
   // templates
   async listTemplates(creator?: string) {
     const rows = creator
-      ? await sql()`select * from playbook.templates where creator = ${lc(creator)} order by created_at desc`
-      : await sql()`select * from playbook.templates order by created_at desc`;
+      ? await sql()`select * from templates where creator = ${lc(creator)} order by created_at desc`
+      : await sql()`select * from templates order by created_at desc`;
     return rows.map(toTemplate);
   },
   async getTemplate(id: string) {
-    const [r] = await sql()`select * from playbook.templates where id = ${id}`;
+    const [r] = await sql()`select * from templates where id = ${id}`;
     return r ? toTemplate(r) : null;
   },
   async createTemplate(t: Omit<Template, 'id' | 'createdAt'>) {
     const [r] = await sql()`
-      insert into playbook.templates ${sql()({ ...t, id: newId('tpl'), creator: lc(t.creator) })}
+      insert into templates ${sql()({ ...t, id: newId('tpl'), creator: lc(t.creator) })}
       returning *`;
     return toTemplate(r);
   },
@@ -161,7 +161,7 @@ export const db = {
   async listApplications(f: AppFilter = {}) {
     const s = sql();
     const rows = await s`
-      select * from playbook.applications
+      select * from applications
       where true
         ${f.funder ? s`and lower(funder) = ${lc(f.funder)}` : s``}
         ${f.templateId ? s`and template_id = ${f.templateId}` : s``}
@@ -171,13 +171,13 @@ export const db = {
     return rows.map(toApplication);
   },
   async getApplication(id: string) {
-    const [r] = await sql()`select * from playbook.applications where id = ${id}`;
+    const [r] = await sql()`select * from applications where id = ${id}`;
     return r ? toApplication(r) : null;
   },
   async addApplication(a: Application) {
     const { createdAt, updatedAt, txs, ...rest } = a;
     const [r] = await sql()`
-      insert into playbook.applications ${sql()({
+      insert into applications ${sql()({
         ...rest,
         creator: lc(a.creator),
         txs: sql().json(txs),
@@ -192,7 +192,7 @@ export const db = {
     for (const k of APP_PATCHABLE) if (k in patch) fields[k] = k === 'txs' ? sql().json(patch.txs ?? []) : patch[k];
     if (!Object.keys(fields).length) return db.getApplication(id);
     const [r] = await sql()`
-      update playbook.applications set ${sql()(fields)}, updated_at = now()
+      update applications set ${sql()(fields)}, updated_at = now()
       where id = ${id}
       returning *`;
     return r ? toApplication(r) : null;
@@ -201,16 +201,16 @@ export const db = {
   // pending quotes (so submit re-uses the exact server-built request: fee cannot be tampered with)
   async putQuote(q: PendingQuote) {
     const s = sql();
-    await s`delete from playbook.quotes where created_at < ${new Date(Date.now() - QUOTE_TTL_MS)}`;
+    await s`delete from quotes where created_at < ${new Date(Date.now() - QUOTE_TTL_MS)}`;
     await s`
-      insert into playbook.quotes (quote_id, template_id, funder, body, bracket, typed, plan, created_at)
+      insert into quotes (quote_id, template_id, funder, body, bracket, typed, plan, created_at)
       values (${q.quoteId}, ${q.templateId}, ${q.funder}, ${s.json(q.body)}, ${q.bracket ? s.json(q.bracket) : null},
               ${s.json(q.typed)}, ${s.json(q.plan)}, ${new Date(q.createdAt)})
       on conflict (quote_id) do nothing`;
   },
   /** Removes and returns a quote, so each one can be submitted once. Expired quotes come back null. */
   async takeQuote(quoteId: string): Promise<PendingQuote | null> {
-    const [r] = await sql()`delete from playbook.quotes where quote_id = ${quoteId} returning *`;
+    const [r] = await sql()`delete from quotes where quote_id = ${quoteId} returning *`;
     if (!r || ms(r.createdAt) < Date.now() - QUOTE_TTL_MS) return null;
     return { ...(r as PendingQuote), createdAt: ms(r.createdAt) };
   },
@@ -227,7 +227,7 @@ export const db = {
              count(*) filter (where status = 'stop_loss')::int              as losses,
              count(*) filter (where status in ('waiting', 'filled'))::int   as open,
              coalesce(sum(amount_usd), 0)::float8                           as volume_usd
-      from playbook.applications
+      from applications
       where status <> 'failed' and template_id in ${sql()(templateIds)}
       group by template_id`;
     for (const r of rows) {
@@ -240,7 +240,7 @@ export const db = {
   async earningsFor(creator: string) {
     const [r] = await sql()`
       select coalesce(sum(creator_fee_usd), 0)::float8 as fees_usd, count(*)::int as applies
-      from playbook.applications where creator = ${lc(creator)}`;
+      from applications where creator = ${lc(creator)}`;
     return { feesUsd: r.feesUsd as number, applies: r.applies as number };
   },
 };

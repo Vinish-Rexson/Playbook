@@ -25,8 +25,9 @@ Everything is live: prices, quotes, fills and fees come from Flash, balances fro
 - Built-in self-custodial wallet: create or import (12/24-word phrase or private key), keys encrypted on the phone
   with SecureStore, fingerprint/PIN unlock, every signature confirmed in an in-app sheet; viem signs and broadcasts on Base
 - Flash API called only from the server routes (`src/server/flash.ts`); the API key never ships in the app
-- Supabase Postgres via `postgres` (`src/server/db.ts`). Tables live in a private `playbook` schema
-  (`supabase/migrations`) that Supabase's public Data API doesn't expose, so only the server routes can reach them
+- Supabase Postgres via `postgres` (`src/server/db.ts`). Tables (`traders`, `templates`, `applications`, `quotes`)
+  are in `public`, defined in `supabase/migrations`. Row Level Security is on and the publishable key has no access,
+  so only the server routes (connecting with `DATABASE_URL`) can read or write them
 
 ## Setup
 
