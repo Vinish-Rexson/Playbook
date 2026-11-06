@@ -2,7 +2,7 @@ import { db } from '@/server/db';
 import { fail, isAddress, ok } from '@/server/http';
 import { refresh } from '@/server/positions';
 
-/** A wallet's positions, refreshed from Flash (or the paper simulator) on every poll. */
+/** A wallet's positions, refreshed from Flash on every poll. */
 export async function GET(request: Request) {
   try {
     const address = new URL(request.url).searchParams.get('address');

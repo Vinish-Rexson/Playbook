@@ -6,12 +6,14 @@ import { useWallet } from '@/wallet/WalletProvider';
 
 export default function Gate() {
   const w = useWallet();
-  if (!w.ready) {
+  if (w.status === 'loading') {
     return (
       <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
         <ActivityIndicator color={colors.cyan} />
       </View>
     );
   }
-  return <Redirect href={w.address ? '/discover' : '/login'} />;
+  if (w.status === 'none') return <Redirect href="/onboarding" />;
+  if (w.status === 'locked') return <Redirect href="/unlock" />;
+  return <Redirect href="/discover" />;
 }

@@ -1,5 +1,5 @@
 import { MAX_CUT_PCT } from '@/lib/constants';
-import { db } from '@/server/db';
+import { db, HOUSE } from '@/server/db';
 import { fail, isAddress, ok } from '@/server/http';
 import { withMeta } from '@/server/meta';
 
@@ -20,6 +20,7 @@ export async function POST(request: Request) {
   try {
     const b = await request.json();
     if (!isAddress(b.creator)) throw new Error('Connect a wallet first');
+    if (b.creator.toLowerCase() === HOUSE) throw new Error('That address is reserved');
     if (!db.getTrader(b.creator)) throw new Error('Create your trader profile first');
     const name = String(b.name ?? '').trim().slice(0, 32);
     if (name.length < 3) throw new Error('Name your playbook (3+ characters)');

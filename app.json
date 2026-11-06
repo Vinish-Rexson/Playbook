@@ -36,7 +36,12 @@
         }
       ],
       "expo-secure-store",
-      "expo-web-browser",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Playbook uses Face ID to unlock your wallet and confirm sensitive actions."
+        }
+      ],
       "react-native-quick-crypto"
     ],
     "experiments": {

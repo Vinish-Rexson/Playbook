@@ -10,7 +10,6 @@ export type PendingQuote = {
   quoteId: string;
   templateId: string;
   funder: string;
-  mode: 'live' | 'paper';
   body: Record<string, any>; // exact Flash quote request, re-used on submit
   bracket: { salt: string | null; deadline: string; signedMaxFromAmount: string } | null;
   // EIP-712 payloads from the quote, echoed back to Flash on submit.
@@ -38,23 +37,57 @@ const key = (address: string) => address.toLowerCase();
 export const newId = (prefix: string) =>
   `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
-function seed(): DB {
+/** Playbook's own account: owns the starter strategies (fees on them go to the Playbook integrator key). */
+export const HOUSE = '0x0000000000000000000000000000000000000000';
+
+const houseTrader = (): Trader => ({
+  address: HOUSE,
+  name: 'Playbook',
+  handle: 'playbook',
+  bio: 'Starter strategies from the Playbook team. Publish your own from the Create tab.',
+  avatar: '📘',
+  createdAt: Date.now(),
+  official: true,
+});
+
+function starterTemplates(): Template[] {
   const now = Date.now();
-  const riya = '0x5ea1ab2f7a3c1d9e0b6c4a8f2e1d7b3c9a0f1e2d';
-  const arjun = '0x9b3c7d1e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0b1c';
-  const meera = '0x2f8e6d4c2b0a8f6e4d2c0b8a6f4e2d0c8b6a4f2e';
-  const traders: DB['traders'] = {
-    [key(riya)]: { address: riya, name: 'Riya Sharma', handle: 'riya', bio: 'Scalps ETH on the 15m. Tight stops, quick exits.', avatar: '🦊', createdAt: now - 9 * 864e5, demo: true },
-    [key(arjun)]: { address: arjun, name: 'Arjun K', handle: 'arjunk', bio: 'Patient dip buyer. Waits for blood, sells into strength.', avatar: '🐋', createdAt: now - 21 * 864e5, demo: true },
-    [key(meera)]: { address: meera, name: 'Meera Iyer', handle: 'meera', bio: 'Range trader. Small wins, every day.', avatar: '🦉', createdAt: now - 4 * 864e5, demo: true },
-  };
-  const templates: Template[] = [
-    { id: 'tpl_quickscalp', creator: riya, name: 'Quick Scalp', description: 'Buys now, takes profit on a 0.3% move, cuts the loss at 0.3%. Built for fast demos and quick flips.', entryOffsetPct: 0, takeProfitPct: 0.3, stopLossPct: 0.3, cutPct: 0.5, createdAt: now - 2 * 864e5 },
-    { id: 'tpl_dipcatcher', creator: riya, name: 'Dip Catcher', description: 'Waits for a 2% dip, then rides the bounce to +5%. Stop at -3% keeps losses small.', entryOffsetPct: -2, takeProfitPct: 5, stopLossPct: 3, cutPct: 0.5, createdAt: now - 6 * 864e5 },
-    { id: 'tpl_deepvalue', creator: arjun, name: 'Deep Value', description: 'Only buys a real flush: 6% below today. Targets a 12% recovery.', entryOffsetPct: -6, takeProfitPct: 12, stopLossPct: 5, cutPct: 1, createdAt: now - 12 * 864e5 },
-    { id: 'tpl_rangerider', creator: meera, name: 'Range Rider', description: 'Small dip, small target. Designed to hit often in sideways markets.', entryOffsetPct: -1, takeProfitPct: 2.5, stopLossPct: 1.5, cutPct: 0.3, createdAt: now - 3 * 864e5 },
+  return [
+    { id: 'tpl_quickscalp', creator: HOUSE, name: 'Quick Scalp', description: 'Buys now, takes profit on a 0.3% move, cuts the loss at 0.3%. Fast in, fast out.', entryOffsetPct: 0, takeProfitPct: 0.3, stopLossPct: 0.3, cutPct: 0.5, createdAt: now - 4 },
+    { id: 'tpl_dipcatcher', creator: HOUSE, name: 'Dip Catcher', description: 'Waits for a 2% dip, then rides the bounce to +5%. Stop at -3% keeps losses small.', entryOffsetPct: -2, takeProfitPct: 5, stopLossPct: 3, cutPct: 0.5, createdAt: now - 3 },
+    { id: 'tpl_rangerider', creator: HOUSE, name: 'Range Rider', description: 'Small dip, small target. Designed to hit often in sideways markets.', entryOffsetPct: -1, takeProfitPct: 2.5, stopLossPct: 1.5, cutPct: 0.3, createdAt: now - 2 },
+    { id: 'tpl_deepvalue', creator: HOUSE, name: 'Deep Value', description: 'Only buys a real flush: 6% below today. Targets a 12% recovery.', entryOffsetPct: -6, takeProfitPct: 12, stopLossPct: 5, cutPct: 1, createdAt: now - 1 },
   ];
-  return { traders, templates, applications: [], quotes: {} };
+}
+
+function seed(): DB {
+  return { traders: { [key(HOUSE)]: houseTrader() }, templates: starterTemplates(), applications: [], quotes: {} };
+}
+
+/** Older data files had demo traders with made-up addresses and simulated (paper) trades: drop both. */
+function migrate(d: DB & { traders: Record<string, Trader & { demo?: boolean }> }) {
+  let changed = false;
+  const demo = new Set(Object.values(d.traders).filter((t) => t.demo).map((t) => key(t.address)));
+  if (demo.size) {
+    for (const k of demo) delete d.traders[k];
+    for (const t of d.templates) if (demo.has(key(t.creator))) t.creator = HOUSE;
+    changed = true;
+  }
+  if (!d.traders[key(HOUSE)]) {
+    d.traders[key(HOUSE)] = houseTrader();
+    changed = true;
+  }
+  const before = d.applications.length;
+  d.applications = d.applications.filter((a) => (a as { mode?: string }).mode !== 'paper' && !a.orderId.startsWith('paper'));
+  for (const a of d.applications) delete (a as { mode?: string }).mode;
+  if (d.applications.length !== before) changed = true;
+  for (const [id, q] of Object.entries(d.quotes)) {
+    if ((q as { mode?: string }).mode === 'paper') {
+      delete d.quotes[id];
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function load(): DB {
@@ -62,6 +95,7 @@ function load(): DB {
   try {
     cache = JSON.parse(fs.readFileSync(FILE, 'utf8')) as DB;
     cache.quotes ??= {};
+    if (migrate(cache)) save();
   } catch {
     cache = seed();
     save();

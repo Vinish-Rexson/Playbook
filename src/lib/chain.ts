@@ -4,9 +4,11 @@ import { base } from 'viem/chains';
 
 import { USDC, USDC_DECIMALS, WETH } from './constants';
 
+export const RPC_URL = process.env.EXPO_PUBLIC_BASE_RPC_URL || undefined;
+
 export const publicClient = createPublicClient({
   chain: base,
-  transport: http(process.env.EXPO_PUBLIC_BASE_RPC_URL || undefined),
+  transport: http(RPC_URL),
 });
 
 export async function balancesOf(address: `0x${string}`) {

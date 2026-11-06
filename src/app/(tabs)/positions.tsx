@@ -12,12 +12,23 @@ import { txUrl } from '@/lib/constants';
 import { cancelMessageFor } from '@/lib/flashMessages';
 import { signedUsd, timeAgo, usd } from '@/lib/pricing';
 import type { Application, PositionStatus } from '@/lib/types';
-import { Button, Card, Divider, Pill, Row, Screen } from '@/ui/primitives';
+import { Button, Card, Divider, Row, Screen } from '@/ui/primitives';
 import { T } from '@/ui/Text';
 import { colors, space } from '@/ui/theme';
 import { useWallet } from '@/wallet/WalletProvider';
 
 const ORDER: PositionStatus[] = ['waiting', 'filled', 'take_profit'];
+
+const REASONS: Record<string, string> = {
+  REASON_USER_REQUESTED: 'You cancelled this order.',
+  REASON_INSUFFICIENT_FUNDER_BALANCE: 'Flash cancelled it: the wallet no longer held enough of the token.',
+  REASON_ORDER_EXPIRED: 'The order expired before it filled.',
+  REASON_PRICE_IMPACT_TOO_HIGH: 'Flash could not sell within the allowed price impact.',
+  REASON_INSUFFICIENT_LIQUIDITY: 'Not enough liquidity to execute.',
+  REASON_ORDER_TRIGGERED_ON_ENTRY: 'A trigger was already hit when the order was placed.',
+};
+const closeReasonText = (r: string) =>
+  REASONS[r] ?? `Flash closed it: ${r.replace(/^REASON_/, '').toLowerCase().replace(/_/g, ' ')}.`;
 
 function Timeline({ status }: { status: PositionStatus }) {
   const idx = status === 'stop_loss' ? 2 : ORDER.indexOf(status);
@@ -51,13 +62,12 @@ function PositionCard({ p, onCancel }: { p: Application; onCancel: (p: Applicati
           <T v="h2">{p.templateName}</T>
           <T v="small">
             {usd(p.amountUsd)} · {timeAgo(p.createdAt)}
-            {p.mode === 'paper' ? ' · paper' : ''}
           </T>
         </Pressable>
         <StatusPill status={p.status} />
       </Row>
 
-      {p.status !== 'cancelled' && p.status !== 'failed' ? <Timeline status={p.status} /> : <Divider />}
+      {p.status !== 'cancelled' && p.status !== 'failed' && p.status !== 'unprotected' ? <Timeline status={p.status} /> : <Divider />}
 
       <Row style={{ justifyContent: 'space-between' }}>
         {[
@@ -81,6 +91,12 @@ function PositionCard({ p, onCancel }: { p: Application; onCancel: (p: Applicati
             {signedUsd(p.pnlUsd)}
           </T>
         </Row>
+      ) : null}
+
+      {p.closeReason && (p.status === 'cancelled' || p.status === 'failed' || p.status === 'unprotected') ? (
+        <T v="small" style={{ marginTop: space(3) }}>
+          {closeReasonText(p.closeReason)}
+        </T>
       ) : null}
 
       {p.txs.length > 0 ? (
@@ -131,7 +147,7 @@ export default function Positions() {
   const realized = positions.reduce((s, p) => s + (p.status === 'take_profit' || p.status === 'stop_loss' ? p.pnlUsd ?? 0 : 0), 0);
 
   const cancel = async (p: Application) => {
-    const sig = p.mode === 'live' ? await w.signMessage(cancelMessageFor(p.orderId)) : undefined;
+    const sig = await w.signMessage(cancelMessageFor(p.orderId));
     await api.cancel(p.id, sig);
     reload();
   };
@@ -182,11 +198,6 @@ export default function Positions() {
           </Animated.View>
         ))}
       </View>
-      {positions.some((p) => p.mode === 'paper') ? (
-        <View style={{ marginTop: space(4), alignItems: 'center' }}>
-          <Pill label="Paper trades are simulated" color={colors.warn} />
-        </View>
-      ) : null}
     </Screen>
   );
 }

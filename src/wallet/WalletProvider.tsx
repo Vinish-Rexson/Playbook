@@ -1,30 +1,47 @@
-// One wallet interface for the whole app, backed by either a Privy embedded wallet (live trades on
-// Base) or Paper mode (simulated fills, no funds, for judges and dry runs).
-import { PrivyProvider, useEmbeddedEthereumWallet, usePrivy } from '@privy-io/expo';
+// One wallet interface for the whole app, backed by the built-in self-custodial wallet
+// (live trades on Base, keys on this phone).
 import * as SecureStore from 'expo-secure-store';
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { base } from 'viem/chains';
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState } from 'react-native';
+import type { Address, Hex } from 'viem';
 
-import { CHAIN_ID_HEX } from '@/lib/constants';
+import type { SignRequest } from './describe';
+import {
+  authenticate,
+  deleteWallet,
+  deviceHasLock,
+  loadMeta,
+  loadSecret,
+  parseSecret,
+  saveMeta,
+  saveWallet,
+  type SecretKind,
+  type WalletMeta,
+} from './keys';
+import { makeSigner, type Signer } from './signer';
+import { SignSheet } from './SignSheet';
 
-import { normalizeTypedData } from './typedData';
-
-export const PRIVY_APP_ID = process.env.EXPO_PUBLIC_PRIVY_APP_ID ?? '';
-export const PRIVY_CLIENT_ID = process.env.EXPO_PUBLIC_PRIVY_CLIENT_ID ?? '';
-export const privyEnabled = PRIVY_APP_ID.length > 0;
-
-export type WalletMode = 'privy' | 'paper';
+export type WalletMode = 'live';
+/** loading → none (onboarding) | locked (unlock screen) | unlocked (live) */
+export type WalletStatus = 'loading' | 'none' | 'locked' | 'unlocked';
 
 export type Wallet = {
-  privyEnabled: boolean;
   ready: boolean;
+  status: WalletStatus;
   mode: WalletMode | null;
-  address: `0x${string}` | null;
-  enterPaper: () => Promise<void>;
-  logout: () => Promise<void>;
+  address: Address | null;
+  meta: WalletMeta | null;
+  deviceSecure: boolean;
+  createWallet: (mnemonic: string, backedUp: boolean) => Promise<void>;
+  importWallet: (input: string) => Promise<void>;
+  unlock: () => Promise<boolean>;
+  lock: () => void;
+  revealSecret: () => Promise<{ kind: SecretKind; value: string } | null>;
+  markBackedUp: () => Promise<void>;
+  removeWallet: () => Promise<boolean>;
   signTypedData: (json: string) => Promise<string>;
   signMessage: (message: string) => Promise<string>;
-  sendTransaction: (tx: { to: string; data: string }) => Promise<`0x${string}`>;
+  sendTransaction: (tx: { to: string; data: string }) => Promise<Hex>;
 };
 
 const WalletContext = createContext<Wallet | null>(null);
@@ -35,137 +52,154 @@ export function useWallet() {
   return w;
 }
 
-type PrivyBits = {
-  ready: boolean;
-  address: `0x${string}` | null;
-  logout: () => Promise<void>;
-  request: ((method: string, params: unknown[]) => Promise<any>) | null;
-};
+// Keys from the old Paper mode; cleared on launch.
+const LEGACY_KEYS = ['playbook.paperAddress', 'playbook.mode'];
+/** Lock again when the app comes back after this long in the background. */
+const AUTO_LOCK_MS = 5 * 60_000;
 
-// Providers already switched to Base (module scope: survives re-renders, no mutation in render).
-const switchedProviders = new WeakSet<object>();
+type Pending = { id: number; req: SignRequest; resolve: () => void; reject: (e: Error) => void };
+let nextRequestId = 1;
 
-const PAPER_KEY = 'playbook.paperAddress';
-const MODE_KEY = 'playbook.mode';
-
-function randomAddress(): `0x${string}` {
-  const bytes = new Uint8Array(20);
-  crypto.getRandomValues(bytes);
-  return `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
-}
-
-function CoreWallet({ privy, children }: { privy: PrivyBits | null; children: ReactNode }) {
-  const [paperAddress, setPaperAddress] = useState<`0x${string}` | null>(null);
-  const [paperOn, setPaperOn] = useState(false);
+export function WalletProvider({ children }: { children: ReactNode }) {
+  const [meta, setMeta] = useState<WalletMeta | null>(null);
+  const [unlocked, setUnlocked] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [deviceSecure, setDeviceSecure] = useState(true);
+  const [pending, setPending] = useState<Pending | null>(null);
+  // The unlocked key lives only in memory, never in React state or storage outside SecureStore.
+  const signer = useRef<Signer | null>(null);
 
   useEffect(() => {
     (async () => {
-      const [addr, mode] = await Promise.all([
-        SecureStore.getItemAsync(PAPER_KEY),
-        SecureStore.getItemAsync(MODE_KEY),
-      ]);
-      if (addr) setPaperAddress(addr as `0x${string}`);
-      setPaperOn(mode === 'paper');
+      const [m, secure] = await Promise.all([loadMeta().catch(() => null), deviceHasLock()]);
+      setMeta(m);
+      setDeviceSecure(secure);
+      LEGACY_KEYS.forEach((k) => SecureStore.deleteItemAsync(k).catch(() => {}));
       setLoaded(true);
     })();
   }, []);
 
-  const enterPaper = useCallback(async () => {
-    let addr = paperAddress;
-    if (!addr) {
-      addr = randomAddress();
-      await SecureStore.setItemAsync(PAPER_KEY, addr);
-      setPaperAddress(addr);
-    }
-    await SecureStore.setItemAsync(MODE_KEY, 'paper');
-    setPaperOn(true);
-  }, [paperAddress]);
+  useEffect(() => {
+    let hiddenAt = 0;
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'background') hiddenAt = Date.now();
+      if (s === 'active') {
+        if (hiddenAt && Date.now() - hiddenAt > AUTO_LOCK_MS && signer.current) {
+          signer.current = null;
+          setUnlocked(false);
+        }
+        hiddenAt = 0;
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
-  const mode: WalletMode | null = privy?.address ? 'privy' : paperOn && paperAddress ? 'paper' : null;
-  const address = mode === 'privy' ? privy!.address : mode === 'paper' ? paperAddress : null;
+  const status: WalletStatus = !loaded ? 'loading' : meta ? (unlocked ? 'unlocked' : 'locked') : 'none';
+  const mode: WalletMode | null = status === 'unlocked' ? 'live' : null;
+  const address: Address | null = meta ? meta.address : null;
 
-  const logout = useCallback(async () => {
-    await SecureStore.deleteItemAsync(MODE_KEY);
-    setPaperOn(false);
-    if (privy?.address) await privy.logout();
-  }, [privy]);
+  const activate = useCallback((m: WalletMeta, privateKey: Hex) => {
+    signer.current = makeSigner(privateKey);
+    setMeta(m);
+    setUnlocked(true);
+  }, []);
 
-  const needLive = useCallback(() => {
-    if (mode !== 'privy' || !privy?.request || !address) {
-      throw new Error('Paper mode cannot sign real orders. Log in with email to trade live.');
-    }
-    return { request: privy.request, address };
-  }, [mode, privy, address]);
-
-  const value = useMemo<Wallet>(
-    () => ({
-      privyEnabled,
-      ready: loaded && (privy ? privy.ready : true),
-      mode,
-      address,
-      enterPaper,
-      logout,
-      signTypedData: async (json) => {
-        const w = needLive();
-        return w.request('eth_signTypedData_v4', [w.address, normalizeTypedData(json)]);
-      },
-      signMessage: async (message) => {
-        const w = needLive();
-        return w.request('personal_sign', [message, w.address]);
-      },
-      sendTransaction: async (tx) => {
-        const w = needLive();
-        return w.request('eth_sendTransaction', [{ from: w.address, to: tx.to, data: tx.data, value: '0x0' }]);
-      },
-    }),
-    [loaded, privy, mode, address, enterPaper, logout, needLive],
+  const confirm = useCallback(
+    (req: SignRequest) =>
+      new Promise<void>((resolve, reject) => setPending({ id: nextRequestId++, req, resolve, reject })),
+    [],
   );
 
-  return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
-}
-
-function PrivyBridge({ children }: { children: ReactNode }) {
-  const { user, isReady, logout } = usePrivy();
-  const { wallets, create } = useEmbeddedEthereumWallet();
-  const embedded = wallets[0];
-
-  // createOnLogin covers new users; this also covers older users who never got a wallet.
-  useEffect(() => {
-    if (isReady && user && wallets.length === 0) create().catch(() => {});
-  }, [isReady, user, wallets.length, create]);
-
-  const request = useMemo(() => {
-    if (!embedded) return null;
-    return async (method: string, params: unknown[]) => {
-      const provider = await embedded.getProvider();
-      if (!switchedProviders.has(provider)) {
-        // Make sure approvals land on Base.
-        await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID_HEX }] }).catch(() => {});
-        switchedProviders.add(provider);
-      }
-      return provider.request({ method, params } as any);
+  const value = useMemo<Wallet>(() => {
+    const live = () => {
+      const s = signer.current;
+      if (!s) throw new Error('Unlock your wallet first.');
+      return s;
     };
-  }, [embedded]);
+    return {
+      ready: loaded,
+      status,
+      mode,
+      address,
+      meta,
+      deviceSecure,
+      createWallet: async (mnemonic, backedUp) => {
+        const r = await saveWallet({ kind: 'mnemonic', mnemonic }, backedUp);
+        activate(r.meta, r.privateKey);
+      },
+      importWallet: async (input) => {
+        const p = parseSecret(input);
+        if (!p.ok) throw new Error(p.reason || 'Enter a recovery phrase or private key');
+        const r = await saveWallet(p, true);
+        activate(r.meta, r.privateKey);
+      },
+      unlock: async () => {
+        if (!(await authenticate('Unlock your Playbook wallet'))) return false;
+        const s = await loadSecret();
+        if (!s) throw new Error('The wallet key is missing from this phone. Import it again with your recovery phrase.');
+        signer.current = makeSigner(s.privateKey);
+        setUnlocked(true);
+        return true;
+      },
+      lock: () => {
+        signer.current = null;
+        setUnlocked(false);
+      },
+      revealSecret: async () => {
+        if (!(await authenticate('Show your recovery phrase'))) return null;
+        const s = await loadSecret();
+        if (!s) return null;
+        return s.kind === 'mnemonic' && s.mnemonic
+          ? { kind: 'mnemonic', value: s.mnemonic }
+          : { kind: 'privateKey', value: s.privateKey };
+      },
+      markBackedUp: async () => {
+        if (!meta) return;
+        const m = { ...meta, backedUp: true };
+        await saveMeta(m);
+        setMeta(m);
+      },
+      removeWallet: async () => {
+        if (!(await authenticate('Remove the wallet from this phone'))) return false;
+        await deleteWallet();
+        signer.current = null;
+        setUnlocked(false);
+        setMeta(null);
+        return true;
+      },
+      signTypedData: async (json) => {
+        const s = live();
+        await confirm({ kind: 'typedData', json });
+        return s.signTypedData(json);
+      },
+      signMessage: async (message) => {
+        const s = live();
+        await confirm({ kind: 'message', message });
+        return s.signMessage(message);
+      },
+      sendTransaction: async (tx) => {
+        const s = live();
+        await confirm({ kind: 'transaction', to: tx.to as Address, data: tx.data as Hex });
+        return s.sendTransaction(tx);
+      },
+    };
+  }, [loaded, status, mode, address, meta, deviceSecure, activate, confirm]);
 
-  const bits: PrivyBits = {
-    ready: isReady,
-    address: user && embedded ? (embedded.address as `0x${string}`) : null,
-    logout,
-    request,
-  };
-  return <CoreWallet privy={bits}>{children}</CoreWallet>;
-}
-
-export function WalletProvider({ children }: { children: ReactNode }) {
-  if (!privyEnabled) return <CoreWallet privy={null}>{children}</CoreWallet>;
   return (
-    <PrivyProvider
-      appId={PRIVY_APP_ID}
-      clientId={PRIVY_CLIENT_ID || undefined}
-      supportedChains={[base]}
-      config={{ embedded: { ethereum: { createOnLogin: 'users-without-wallets' } } }}>
-      <PrivyBridge>{children}</PrivyBridge>
-    </PrivyProvider>
+    <WalletContext.Provider value={value}>
+      {children}
+      <SignSheet
+        request={pending}
+        from={status === 'unlocked' ? address : null}
+        onApprove={() => {
+          pending?.resolve();
+          setPending(null);
+        }}
+        onReject={() => {
+          pending?.reject(new Error('You rejected the request in your wallet.'));
+          setPending(null);
+        }}
+      />
+    </WalletContext.Provider>
   );
 }

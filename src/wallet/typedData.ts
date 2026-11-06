@@ -1,20 +1,17 @@
 // Flash returns EIP-712 payloads as JSON strings ({ domain, types, primaryType, message }).
-// eth_signTypedData_v4 signers expect `types.EIP712Domain`; add it when Flash omits it.
-const DOMAIN_FIELDS: [string, string][] = [
-  ['name', 'string'],
-  ['version', 'string'],
-  ['chainId', 'uint256'],
-  ['verifyingContract', 'address'],
-  ['salt', 'bytes32'],
-];
+// viem derives the EIP712Domain type from the domain itself, so drop Flash's copy and make sure
+// chainId is a number (viem only includes chainId in the domain hash when it is a number/bigint).
+export type TypedDataInput = {
+  domain: Record<string, unknown>;
+  types: Record<string, { name: string; type: string }[]>;
+  primaryType: string;
+  message: Record<string, unknown>;
+};
 
-export function normalizeTypedData(json: string): string {
+export function parseTypedData(json: string): TypedDataInput {
   const td = JSON.parse(json);
-  if (td?.types && !td.types.EIP712Domain && td.domain) {
-    td.types = {
-      EIP712Domain: DOMAIN_FIELDS.filter(([k]) => td.domain[k] !== undefined).map(([name, type]) => ({ name, type })),
-      ...td.types,
-    };
-  }
-  return JSON.stringify(td);
+  const { EIP712Domain: _domainType, ...types } = td.types ?? {};
+  const domain = { ...(td.domain ?? {}) };
+  if (domain.chainId !== undefined) domain.chainId = Number(domain.chainId);
+  return { domain, types, primaryType: td.primaryType, message: td.message ?? {} };
 }

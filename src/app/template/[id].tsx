@@ -177,7 +177,7 @@ export default function TemplateScreen() {
             </T>
           )}
           <Button
-            title={w.mode === 'paper' ? 'Apply playbook (Paper)' : 'Apply playbook'}
+            title="Apply playbook"
             onPress={apply}
             disabled={!plan || amountUsd < MIN_APPLY_USD}
             style={{ marginTop: space(4) }}
@@ -203,7 +203,6 @@ export default function TemplateScreen() {
                   <T v="small">
                     {timeAgo(a.createdAt)}
                     {a.pnlUsd !== undefined ? ` · ${signedUsd(a.pnlUsd)}` : ''}
-                    {a.mode === 'paper' ? ' · paper' : ''}
                   </T>
                 </View>
                 <StatusPill status={a.status} />

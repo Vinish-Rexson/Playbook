@@ -73,11 +73,6 @@ export function ApplySheet({
                 {result.orderType === 'market' ? 'Buying now' : `Buying at ${usd(result.entryPrice)}`}, protected by a
                 take-profit at {usd(result.takeProfitPrice)} and a stop at {usd(result.stopLossPrice)}.
               </T>
-              {result.mode === 'paper' && (
-                <T v="small" color={colors.warn}>
-                  Paper mode: simulated, no real funds moved.
-                </T>
-              )}
               <Button title="View position" onPress={onViewPosition} style={{ alignSelf: 'stretch', marginTop: space(2) }} />
               <Button title="Done" variant="ghost" onPress={onClose} size="md" />
             </Animated.View>

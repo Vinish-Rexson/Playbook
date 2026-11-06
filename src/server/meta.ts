@@ -11,8 +11,7 @@ export const withMeta = (t: Template): TemplateWithMeta => ({
 export function earningsFor(creator: string): Earnings {
   const apps = db.listApplications((a) => a.creator.toLowerCase() === creator.toLowerCase());
   return {
-    liveUsd: apps.filter((a) => a.mode === 'live').reduce((s, a) => s + (a.creatorFeeUsd || 0), 0),
-    paperUsd: apps.filter((a) => a.mode === 'paper').reduce((s, a) => s + (a.creatorFeeUsd || 0), 0),
+    feesUsd: apps.reduce((s, a) => s + (a.creatorFeeUsd || 0), 0),
     applies: apps.length,
   };
 }

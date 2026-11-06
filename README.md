@@ -17,12 +17,13 @@ Built for the ETHGlobal Mumbai **Definitive** track ("Best Use of Flash Advanced
 | Execute | Flash holds the order, fills the entry, then the bracket sells at take-profit or stop-loss |
 | Earn | Each fill's `integratorFeeNotional` is credited to the playbook's creator |
 
-Paper mode runs the same flow with live prices but simulated fills, so judges can try it without funds.
+Everything is live: prices, quotes, fills and fees come from Flash, balances from Base. There is no simulated mode.
 
 ## Stack
 
 - Expo SDK 58 / React Native 0.88, Expo Router (screens in `src/app`, server routes in `src/app/api`)
-- Privy embedded wallets (email login) on Base, viem for reads and receipts
+- Built-in self-custodial wallet: create or import (12/24-word phrase or private key), keys encrypted on the phone
+  with SecureStore, fingerprint/PIN unlock, every signature confirmed in an in-app sheet; viem signs and broadcasts on Base
 - Flash API called only from the server routes (`src/server/flash.ts`); the API key never ships in the app
 - JSON file store in `./data` for the hackathon (swap for Supabase before deploying)
 
@@ -31,12 +32,12 @@ Paper mode runs the same flow with live prices but simulated fills, so judges ca
 1. `npm install`
 2. `cp .env.example .env` and fill in:
    - `FLASH_API_KEY`: your key from app.definitive.fi (More → Flash → Create Flash Key). Empty = the public dev key from the Flash docs (fees are not collected).
-   - `EXPO_PUBLIC_PRIVY_APP_ID` / `EXPO_PUBLIC_PRIVY_CLIENT_ID`: from dashboard.privy.io. Add an Android app client for `com.playbook.app`. Empty = Paper mode only.
+   - `EXPO_PUBLIC_BASE_RPC_URL` (optional): your own Base RPC. Empty = the public `mainnet.base.org` endpoint.
 3. Android toolchain (Windows): set `ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk` and add `%ANDROID_HOME%\platform-tools` to `PATH`.
 
 ## Run
 
-Privy uses native modules, so the app needs a **development build** (Expo Go will not work):
+The wallet uses native modules (SecureStore, biometrics, quick-crypto), so the app needs a **development build** (Expo Go will not work):
 
 ```bash
 npx expo run:android
@@ -53,7 +54,8 @@ The phone must reach your laptop over the same Wi-Fi network.
 ## Demo tips
 
 - Use **Quick Scalp** (market buy, ±0.3%) so the fill and the take-profit happen on camera.
-- Fund the demo wallet on Base with ~$30 USDC and a little ETH for the two one-time approvals (Profile → QR).
+- Create a wallet in the app (or import a dedicated trading wallet), then fund it on Base with ~$30 USDC and a little ETH
+  for the two one-time approvals (Profile → Receive).
 - Fills link to Basescan from the Positions tab.
 
 ## Checks

@@ -115,6 +115,7 @@ export const statusMeta: Record<PositionStatus, { label: string; color: string }
   stop_loss: { label: 'Stopped out', color: colors.loss },
   cancelled: { label: 'Cancelled', color: colors.textMute },
   failed: { label: 'Failed', color: colors.loss },
+  unprotected: { label: 'Protection ended', color: colors.warn },
 };
 
 export function StatusPill({ status }: { status: PositionStatus }) {

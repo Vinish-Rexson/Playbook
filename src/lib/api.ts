@@ -22,16 +22,16 @@ async function req<T>(path: string, init?: { method?: string; body?: unknown }):
 export type TxAction = { to: string; data: string } | null;
 export type QuoteResult = {
   quoteId: string;
-  mode: 'live' | 'paper';
   plan: ApplyPlan;
   estimatedFeeUsd: number;
   receiveEth: number;
+  priceImpact: number | null;
   actions: {
     approveTx: TxAction;
     permitTypedData: string | null;
     orderTypedData: string;
-    bracket: { approveTx: TxAction; permitTypedData: string | null; orderTypedData: string } | null;
-  } | null;
+    bracket: { approveTx: TxAction; permitTypedData: string | null; orderTypedData: string };
+  };
 };
 
 export const api = {
@@ -54,7 +54,7 @@ export const api = {
     ),
   saveTrader: (body: { address: string; name: string; handle?: string; bio: string; avatar: string }) =>
     req<{ trader: Trader }>('/api/traders', { body }),
-  quote: (body: { templateId: string; amountUsd: number; funder: string; mode: 'live' | 'paper' }) =>
+  quote: (body: { templateId: string; amountUsd: number; funder: string }) =>
     req<QuoteResult>('/api/apply/quote', { body }),
   submit: (body: {
     quoteId: string;
@@ -67,6 +67,6 @@ export const api = {
   }) => req<{ position: Application }>('/api/apply/submit', { body }),
   positions: (address: string) =>
     req<{ positions: Application[] }>(`/api/positions?address=${address}`),
-  cancel: (id: string, userSignature?: string) =>
-    req<{ position: Application }>(`/api/positions/${id}/cancel`, { body: { userSignature: userSignature ?? '' } }),
+  cancel: (id: string, userSignature: string) =>
+    req<{ position: Application }>(`/api/positions/${id}/cancel`, { body: { userSignature } }),
 };

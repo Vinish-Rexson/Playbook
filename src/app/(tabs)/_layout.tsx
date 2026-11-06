@@ -7,7 +7,8 @@ import { useWallet } from '@/wallet/WalletProvider';
 
 export default function TabsLayout() {
   const w = useWallet();
-  if (w.ready && !w.address) return <Redirect href="/login" />;
+  if (w.status === 'none') return <Redirect href="/onboarding" />;
+  if (w.status === 'locked') return <Redirect href="/unlock" />;
   return (
     <Tabs
       screenOptions={{

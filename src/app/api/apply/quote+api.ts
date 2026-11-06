@@ -2,7 +2,7 @@
 // (so the creator cut cannot be changed by the client) and request a Flash quote.
 import { CHAIN, MIN_APPLY_USD, USDC, WETH } from '@/lib/constants';
 import { buildPlan } from '@/lib/pricing';
-import { db, newId } from '@/server/db';
+import { db } from '@/server/db';
 import { flash, type FlashQuote } from '@/server/flash';
 import { fail, isAddress, ok } from '@/server/http';
 import { ethPrice } from '@/server/price';
@@ -10,7 +10,6 @@ import { ethPrice } from '@/server/price';
 export async function POST(request: Request) {
   try {
     const b = await request.json();
-    const mode: 'live' | 'paper' = b.mode === 'paper' ? 'paper' : 'live';
     if (!isAddress(b.funder)) throw new Error('Connect a wallet first');
     const template = db.getTemplate(String(b.templateId));
     if (!template) throw new Error('Playbook not found');
@@ -39,55 +38,45 @@ export async function POST(request: Request) {
     };
     // A limit entry carrying a bracket must use limitCrossPrice (USDC per WETH), per the Flash bracket docs.
     if (plan.orderType === 'limit') body.limitCrossPrice = plan.entryPrice.toFixed(2);
+    // Same string on /quote and /order (Monetize Your Integration docs).
     if (plan.cutBps > 0) body.flashIntegratorFeeBps = String(plan.cutBps);
 
-    if (mode === 'paper') {
-      const quoteId = newId('paper');
-      db.putQuote({
-        quoteId, templateId: template.id, funder: b.funder, mode, body, plan,
-        bracket: null, typed: { order: null, permit: null, bracketOrder: null, bracketPermit: null },
-        createdAt: Date.now(),
-      });
-      return ok({ quoteId, mode, plan, actions: null, estimatedFeeUsd: plan.creatorFeeUsd + plan.definitiveFeeUsd, receiveEth: plan.estEth });
-    }
-
     const q = await flash<FlashQuote>('/quote', { body });
-    if (!q.evm?.orderTypedData) throw new Error('Flash returned no order to sign');
     const ab = q.attachedBracket;
+    if (!q.evm?.orderTypedData) throw new Error('Flash returned no order to sign');
+    if (!ab?.evm?.orderTypedData) throw new Error('Flash returned no take-profit / stop-loss order to sign');
+
     db.putQuote({
       quoteId: q.quoteId,
       templateId: template.id,
       funder: b.funder,
-      mode,
       body,
       plan,
-      bracket: ab ? { salt: ab.salt, deadline: ab.deadline, signedMaxFromAmount: ab.signedMaxFromAmount } : null,
+      bracket: { salt: ab.salt, deadline: ab.deadline, signedMaxFromAmount: ab.signedMaxFromAmount },
       typed: {
         order: q.evm.orderTypedData,
         permit: q.evm.permitTypedData,
-        bracketOrder: ab?.evm?.orderTypedData ?? null,
-        bracketPermit: ab?.evm?.permitTypedData ?? null,
+        bracketOrder: ab.evm.orderTypedData,
+        bracketPermit: ab.evm.permitTypedData,
       },
       createdAt: Date.now(),
     });
 
     return ok({
       quoteId: q.quoteId,
-      mode,
       plan,
       estimatedFeeUsd: Number(q.fees?.estimatedFeeNotional ?? 0),
       receiveEth: Number(q.to?.amount ?? plan.estEth),
+      priceImpact: q.estimatedPriceImpact === null ? null : Number(q.estimatedPriceImpact),
       actions: {
         approveTx: q.evm.approveTx,
         permitTypedData: q.evm.permitTypedData,
         orderTypedData: q.evm.orderTypedData,
-        bracket: ab?.evm
-          ? {
-              approveTx: ab.evm.approveTx,
-              permitTypedData: ab.evm.permitTypedData,
-              orderTypedData: ab.evm.orderTypedData,
-            }
-          : null,
+        bracket: {
+          approveTx: ab.evm.approveTx,
+          permitTypedData: ab.evm.permitTypedData,
+          orderTypedData: ab.evm.orderTypedData,
+        },
       },
     });
   } catch (e) {

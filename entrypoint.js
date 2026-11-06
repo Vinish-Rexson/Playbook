@@ -1,4 +1,4 @@
-// Privy's WebCrypto polyfills must load before anything else (see Privy Expo install docs).
-import '@privy-io/expo/polyfills';
+// Web Crypto polyfills must load before anything else (viem needs crypto.getRandomValues).
+import './src/polyfills';
 // Then hand off to Expo Router.
 import 'expo-router/entry';

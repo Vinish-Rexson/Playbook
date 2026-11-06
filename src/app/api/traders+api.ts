@@ -1,4 +1,4 @@
-import { db } from '@/server/db';
+import { db, HOUSE } from '@/server/db';
 import { fail, isAddress, ok } from '@/server/http';
 
 export function GET() {
@@ -10,6 +10,7 @@ export async function POST(request: Request) {
   try {
     const b = await request.json();
     if (!isAddress(b.address)) throw new Error('A wallet address is required');
+    if (b.address.toLowerCase() === HOUSE) throw new Error('That address is reserved');
     const name = String(b.name ?? '').trim().slice(0, 40);
     if (name.length < 2) throw new Error('Pick a display name (2+ characters)');
     const handle = String(b.handle ?? name)

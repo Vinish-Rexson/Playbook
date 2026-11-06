@@ -5,7 +5,8 @@ export type Trader = {
   bio: string;
   avatar: string; // emoji
   createdAt: number;
-  demo?: boolean;
+  /** Playbook's own starter strategies (no individual creator). */
+  official?: boolean;
 };
 
 export type Template = {
@@ -38,6 +39,7 @@ export type PositionStatus =
   | 'take_profit'
   | 'stop_loss'
   | 'cancelled'
+  | 'unprotected' // bought, but the take-profit / stop-loss closed without selling
   | 'failed';
 
 export type TxRef = { label: string; hash: string };
@@ -48,7 +50,6 @@ export type Application = {
   templateName: string;
   creator: string;
   funder: string;
-  mode: 'live' | 'paper';
   amountUsd: number;
   orderType: 'market' | 'limit';
   marketPriceAtApply: number;
@@ -87,7 +88,7 @@ export type ApplyPlan = {
 };
 
 export type Earnings = {
-  liveUsd: number;
-  paperUsd: number;
+  /** Integrator fees Flash reported on this creator's fills (integratorFeeNotional), in USD. */
+  feesUsd: number;
   applies: number;
 };

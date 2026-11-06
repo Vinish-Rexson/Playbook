@@ -1,5 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
+import { ArrowLeft } from 'lucide-react-native';
 import type { ReactNode } from 'react';
 import {
   ActivityIndicator,
@@ -154,6 +155,39 @@ export function Row({ children, style, gap = 8 }: { children: ReactNode; style?:
   return <View style={[{ flexDirection: 'row', alignItems: 'center', gap }, style]}>{children}</View>;
 }
 
+/** Back arrow + optional title and step dots, for pushed screens. */
+export function Header({ title, onBack, step }: { title?: string; onBack: () => void; step?: { at: number; of: number } }) {
+  return (
+    <Row style={{ justifyContent: 'space-between', marginTop: space(2), marginBottom: space(5), minHeight: 44 }}>
+      <Pressable hitSlop={12} onPress={onBack} style={s.backBtn}>
+        <ArrowLeft size={20} color={colors.text} />
+      </Pressable>
+      {title ? (
+        <T v="h3" style={{ flex: 1, textAlign: 'center' }}>
+          {title}
+        </T>
+      ) : (
+        <View style={{ flex: 1 }} />
+      )}
+      <Row gap={6} style={{ width: 40, justifyContent: 'flex-end' }}>
+        {step
+          ? Array.from({ length: step.of }, (_, i) => (
+              <View
+                key={i}
+                style={{
+                  width: i === step.at ? 14 : 6,
+                  height: 6,
+                  borderRadius: 3,
+                  backgroundColor: i <= step.at ? colors.cyan : colors.borderHi,
+                }}
+              />
+            ))
+          : null}
+      </Row>
+    </Row>
+  );
+}
+
 export function Divider() {
   return <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginVertical: space(3) }} />;
 }
@@ -189,4 +223,14 @@ const s = StyleSheet.create({
   pill: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, alignSelf: 'flex-start' },
   chip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.sm, borderWidth: 1 },
   avatarInner: { flex: 1, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: colors.cardHi,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });
