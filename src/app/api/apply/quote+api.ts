@@ -47,7 +47,20 @@ export async function POST(request: Request) {
       },
     };
     // A limit entry carrying a bracket must use limitCrossPrice (USDC per unit bought), per the Flash bracket docs.
-    if (plan.orderType === 'limit') body.limitCrossPrice = plan.entryPrice.toFixed(2);
+    if (plan.orderType === 'limit') {
+      body.limitCrossPrice = plan.entryPrice.toFixed(2);
+      if (template.entryExpiryHours) body.expireTime = new Date(Date.now() + template.entryExpiryHours * 3_600_000).toISOString();
+    }
+    // DCA: Flash TWAP splits the buy into slices over the duration (min 300s), optionally capped at the dip price.
+    if (plan.orderType === 'twap') {
+      body.durationSeconds = (template.twapMinutes ?? 60) * 60;
+      body.twapBucketCount = template.twapSlices ?? 6;
+      if (plan.entryPrice < plan.marketPrice) body.limitCrossPrice = plan.entryPrice.toFixed(2);
+    }
+    if (plan.orderType === 'market' && template.maxSlippagePct) body.maxSlippage = String(template.maxSlippagePct / 100);
+    if (template.bracketExpiryDays) {
+      body.attachedBracket.expireTime = new Date(Date.now() + template.bracketExpiryDays * 86_400_000).toISOString();
+    }
     // Same string on /quote and /order (Monetize Your Integration docs).
     if (plan.cutBps > 0) body.flashIntegratorFeeBps = String(plan.cutBps);
 

@@ -74,7 +74,7 @@ export function ApplySheet({
               <T v="body" style={{ textAlign: 'center' }}>
                 {templateName} is running on {usd(result.amountUsd)} of {NETWORKS[result.chain].asset} on{' '}
                 {NETWORKS[result.chain].name}.{' '}
-                {result.orderType === 'market' ? 'Buying now' : `Buying at ${usd(result.entryPrice)}`}, protected by a
+                {result.orderType === 'market' ? 'Buying now' : result.orderType === 'twap' ? 'Buying in slices over time (DCA)' : `Buying at ${usd(result.entryPrice)}`}, protected by a
                 take-profit at {usd(result.takeProfitPrice)} and a stop at {usd(result.stopLossPrice)}.
               </T>
               <Button title="View position" onPress={onViewPosition} style={{ alignSelf: 'stretch', marginTop: space(2) }} />

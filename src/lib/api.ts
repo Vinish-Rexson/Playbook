@@ -5,8 +5,10 @@ import type {
   Application,
   ApplyPlan,
   Earnings,
+  OrderOptions,
   TemplateWithMeta,
   Trader,
+  TraderSummary,
 } from './types';
 
 async function req<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
@@ -54,6 +56,12 @@ export type SolanaQuote = QuoteCommon & {
 
 export type QuoteResult = BaseQuote | SolanaQuote;
 
+/** Market sell quote for closing a position: `qty` of the bought asset for about `receiveUsd` USDC. */
+export type CloseQuote = { quoteId: string; chain: Chain; qty: number; receiveUsd: number } & (
+  | { actions: { approveTx: TxAction; permitTypedData: string | null; orderTypedData: string } }
+  | { solana: { setupNeeded: boolean; orderMessage: string } }
+);
+
 /** Wallet signature proving the caller owns the address (see lib/ownership). */
 export type OwnerProof = { time: string; signature: string };
 
@@ -77,7 +85,9 @@ export const api = {
     cutPct: number;
     chain: PlaybookNetwork;
     proof: OwnerProof;
-  }) => req<{ template: TemplateWithMeta }>('/api/templates', { body }),
+  } & Partial<OrderOptions>) => req<{ template: TemplateWithMeta }>('/api/templates', { body }),
+  /** Creators by name or handle (empty query: most applied first). */
+  traders: (q = '') => req<{ traders: TraderSummary[] }>(`/api/traders?q=${encodeURIComponent(q)}`),
   trader: (address: string) =>
     req<{ trader: Trader | null; templates: TemplateWithMeta[]; earnings: Earnings; recent: Application[] }>(
       `/api/traders/${address}`,
@@ -105,4 +115,16 @@ export const api = {
     req<{ positions: Application[] }>(`/api/positions?${addresses.map((a) => `address=${encodeURIComponent(a)}`).join('&')}`),
   cancel: (id: string, userSignature: string) =>
     req<{ position: Application }>(`/api/positions/${id}/cancel`, { body: { userSignature } }),
+  /** One position, refreshed from Flash (detail page). */
+  position: (id: string) => req<{ position: Application }>(`/api/positions/${id}`),
+  closePrepare: (id: string) =>
+    req<{ alreadyClosed: boolean; position?: Application; cancel?: { orderIds: string[]; message: string } | null; nothingBought?: boolean }>(
+      `/api/positions/${id}/close`,
+      { body: { step: 'prepare' } },
+    ),
+  closeCancel: (id: string, orderIds: string[], userSignature: string) =>
+    req<{ alreadyClosed: boolean; position: Application }>(`/api/positions/${id}/close`, { body: { step: 'cancel', orderIds, userSignature } }),
+  closeQuote: (id: string) => req<CloseQuote>(`/api/positions/${id}/close`, { body: { step: 'quote' } }),
+  closeSubmit: (id: string, body: { quoteId: string; userSignature: string; permitSignature?: string; approvalTxs?: string[] }) =>
+    req<{ position: Application }>(`/api/positions/${id}/close`, { body: { step: 'submit', ...body } }),
 };

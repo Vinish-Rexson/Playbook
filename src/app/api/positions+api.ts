@@ -10,7 +10,7 @@ export async function GET(request: Request) {
     if (!addresses.length) throw new Error('address is required');
     for (const a of addresses) if (!isAddress(a) && !isSolanaAddress(a)) throw new Error(`Not a wallet address: ${a}`);
     const apps = await db.listApplications({ funders: addresses });
-    const positions = await Promise.all(apps.map(refresh));
+    const positions = await Promise.all(apps.map((a) => refresh(a)));
     return ok({ positions });
   } catch (e) {
     return fail(e);

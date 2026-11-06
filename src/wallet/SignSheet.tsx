@@ -28,17 +28,19 @@ function useNetworkFee(req: SignRequest, from: string) {
         if (req.kind === 'solTransaction') {
           const cost = solanaTxCost(req.message);
           const bal = await solBalancesOf(from);
-          if (!off) setFee({ amount: cost.totalSol, rent: cost.rentSol, enough: bal.sol >= cost.totalSol });
+          // Shown: fee + rent. Checked: fee + rent + any SOL being sent.
+          if (!off) setFee({ amount: cost.feeSol + cost.rentSol, rent: cost.rentSol, enough: bal.sol >= cost.totalSol });
           return;
         }
         const account = from as Address;
+        const value = req.value ? BigInt(req.value) : 0n;
         const [gas, fees, balance] = await Promise.all([
-          publicClient.estimateGas({ account, to: req.to, data: req.data }),
+          publicClient.estimateGas({ account, to: req.to, data: req.data, value }),
           publicClient.estimateFeesPerGas(),
           publicClient.getBalance({ address: account }),
         ]);
         const wei = gas * (fees.maxFeePerGas ?? 0n);
-        if (!off) setFee({ amount: Number(formatEther(wei)), rent: 0, enough: balance >= wei });
+        if (!off) setFee({ amount: Number(formatEther(wei)), rent: 0, enough: balance >= wei + value });
       } catch {
         if (!off) setFee({ error: 'Could not estimate the network fee.' });
       }

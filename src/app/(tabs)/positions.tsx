@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { ExternalLink } from 'lucide-react-native';
+import { ChevronRight, ExternalLink } from 'lucide-react-native';
 import { useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Pressable, View } from 'react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
@@ -54,11 +54,11 @@ function Timeline({ status }: { status: PositionStatus }) {
 
 function PositionCard({ p, onCancel }: { p: Application; onCancel: (p: Application) => Promise<void> }) {
   const [busy, setBusy] = useState(false);
-  const closed = p.status === 'take_profit' || p.status === 'stop_loss';
+  const closed = p.status === 'take_profit' || p.status === 'stop_loss' || p.status === 'closed';
   return (
     <Card>
       <Row style={{ justifyContent: 'space-between' }}>
-        <Pressable onPress={() => router.push({ pathname: '/template/[id]', params: { id: p.templateId } })} style={{ flex: 1 }}>
+        <Pressable onPress={() => router.push({ pathname: '/position/[id]', params: { id: p.id } })} style={{ flex: 1 }} accessibilityRole="button">
           <T v="h2">{p.templateName}</T>
           <T v="small">
             {usd(p.amountUsd)} of {NETWORKS[p.chain].asset} on {NETWORKS[p.chain].name} · {timeAgo(p.createdAt)}
@@ -67,11 +67,11 @@ function PositionCard({ p, onCancel }: { p: Application; onCancel: (p: Applicati
         <StatusPill status={p.status} />
       </Row>
 
-      {p.status !== 'cancelled' && p.status !== 'failed' && p.status !== 'unprotected' ? <Timeline status={p.status} /> : <Divider />}
+      {['waiting', 'filled', 'take_profit', 'stop_loss'].includes(p.status) ? <Timeline status={p.status} /> : <Divider />}
 
       <Row style={{ justifyContent: 'space-between' }}>
         {[
-          { k: p.filledPrice ? 'Bought' : 'Buy at', v: usd(p.filledPrice ?? p.entryPrice), c: colors.text },
+          { k: p.filledPrice ? (p.orderType === 'twap' ? 'Avg buy' : 'Bought') : p.orderType === 'twap' ? 'DCA from' : 'Buy at', v: usd(p.filledPrice ?? p.entryPrice), c: colors.text },
           { k: 'Target', v: usd(p.takeProfitPrice), c: colors.profit },
           { k: 'Stop', v: usd(p.stopLossPrice), c: colors.loss },
         ].map((x) => (
@@ -114,6 +114,15 @@ function PositionCard({ p, onCancel }: { p: Application; onCancel: (p: Applicati
         </Row>
       ) : null}
 
+      <Pressable
+        onPress={() => router.push({ pathname: '/position/[id]', params: { id: p.id } })}
+        style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: space(4), alignSelf: 'flex-start' }, pressed && { opacity: 0.6 }]}
+        hitSlop={8}
+        accessibilityRole="button">
+        <T v="bodyMed">{p.status === 'filled' || p.status === 'unprotected' ? 'Details and close' : 'Details'}</T>
+        <ChevronRight size={16} strokeWidth={1.75} color={colors.text} />
+      </Pressable>
+
       {p.status === 'waiting' ? (
         <Button
           title="Cancel order"
@@ -147,8 +156,8 @@ export default function Positions() {
     5000,
   );
   const positions = data?.positions ?? [];
-  const open = positions.filter((p) => p.status === 'waiting' || p.status === 'filled').length;
-  const realized = positions.reduce((s, p) => s + (p.status === 'take_profit' || p.status === 'stop_loss' ? p.pnlUsd ?? 0 : 0), 0);
+  const open = positions.filter((p) => p.status === 'waiting' || p.status === 'filled' || p.status === 'closing').length;
+  const realized = positions.reduce((s, p) => s + (p.status === 'take_profit' || p.status === 'stop_loss' || p.status === 'closed' ? p.pnlUsd ?? 0 : 0), 0);
 
   const cancel = async (p: Application) => {
     const msg = cancelMessageFor(p.orderId);

@@ -2,7 +2,7 @@
 // independent levels: moving one (by dragging it on the chart or with + / −) never moves the others.
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { Info, X } from 'lucide-react-native';
+import { ChevronDown, ChevronUp, Info, X } from 'lucide-react-native';
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import Animated, { Easing, FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
@@ -17,7 +17,8 @@ import { api, type Timeframe } from '@/lib/api';
 import { clamp, fmtPrice, readChart, RULE_LIMITS, setupsFrom, type Setup } from '@/lib/chartMath';
 import { MAX_CUT_PCT, NETWORKS, type Chain } from '@/lib/constants';
 import { proveOwner } from '@/lib/ownership';
-import { buildPlan, pct, round2, signedUsd, usd } from '@/lib/pricing';
+import { buildPlan, durationLabel, pct, round2, signedUsd, usd } from '@/lib/pricing';
+import type { EntryType } from '@/lib/types';
 import { Avatar, AVATAR_TONES, Button, Card, Row, Screen, toneOf } from '@/ui/primitives';
 import { T } from '@/ui/Text';
 import { colors, DUR, EASE, fonts, radius, space } from '@/ui/theme';
@@ -25,6 +26,98 @@ import { useWallet } from '@/wallet/WalletProvider';
 
 const L = RULE_LIMITS;
 const rise = FadeInDown.duration(DUR.enter).easing(Easing.bezier(...EASE));
+
+// Choices for Flash's order options (Placing Orders and TWAP docs). null = Flash's default behaviour.
+const TWAP_DURATIONS = [
+  { value: 10, label: '10m' },
+  { value: 30, label: '30m' },
+  { value: 60, label: '1h' },
+  { value: 240, label: '4h' },
+  { value: 1440, label: '24h' },
+];
+const ENTRY_EXPIRY: { value: number | null; label: string }[] = [
+  { value: null, label: 'Until filled' },
+  { value: 4, label: '4h' },
+  { value: 24, label: '24h' },
+  { value: 168, label: '7d' },
+];
+const BRACKET_EXPIRY: { value: number | null; label: string }[] = [
+  { value: null, label: 'Always' },
+  { value: 1, label: '1d' },
+  { value: 7, label: '7d' },
+  { value: 30, label: '30d' },
+];
+const SLIPPAGE: { value: number | null; label: string }[] = [
+  { value: null, label: 'Auto' },
+  { value: 0.5, label: '0.5%' },
+  { value: 1, label: '1%' },
+  { value: 3, label: '3%' },
+];
+
+function optionsSummary(o: {
+  entryType: EntryType;
+  twapMinutes: number;
+  entryExpiryHours: number | null;
+  bracketExpiryDays: number | null;
+  maxSlippagePct: number | null;
+}) {
+  const first =
+    o.entryType === 'twap'
+      ? `DCA over ${durationLabel(o.twapMinutes)}`
+      : o.entryType === 'limit'
+        ? o.entryExpiryHours
+          ? `buy waits ${durationLabel(o.entryExpiryHours * 60)}`
+          : 'buy waits until filled'
+        : o.maxSlippagePct
+          ? `${o.maxSlippagePct}% max slippage`
+          : 'auto slippage';
+  return `${first} · protection ${o.bracketExpiryDays ? `${o.bracketExpiryDays}d` : 'always on'}`;
+}
+
+/** Small segmented control used for the entry type. */
+function Segment<V extends string>({ value, onChange, options }: { value: V; onChange: (v: V) => void; options: { value: V; label: string }[] }) {
+  return (
+    <View style={s.segment}>
+      {options.map((o) => (
+        <Pressable
+          key={o.value}
+          onPress={() => {
+            Haptics.selectionAsync().catch(() => {});
+            onChange(o.value);
+          }}
+          style={[s.segmentItem, o.value === value && s.segmentOn]}>
+          <T v="small" color={o.value === value ? colors.text : colors.textDim} style={{ fontFamily: fonts.bodyMed }}>
+            {o.label}
+          </T>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+/** A labelled row of choice chips. */
+function Choice<V extends number | null>({ label, value, onChange, options }: { label: string; value: V; onChange: (v: V) => void; options: { value: V; label: string }[] }) {
+  return (
+    <View style={{ gap: space(2) }}>
+      <T v="small">{label}</T>
+      <Row gap={8} style={{ flexWrap: 'wrap' }}>
+        {options.map((o) => (
+          <Pressable
+            key={String(o.value)}
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              onChange(o.value);
+            }}
+            style={({ pressed }) => [s.choice, o.value === value && s.choiceOn, { transform: [{ scale: pressed ? 0.97 : 1 }] }]}>
+            <T v="small" color={colors.text} style={{ fontFamily: fonts.bodyMed }}>
+              {o.label}
+            </T>
+          </Pressable>
+        ))}
+      </Row>
+    </View>
+  );
+}
 
 function Field(props: React.ComponentProps<typeof TextInput> & { label: string }) {
   const { label, style, ...rest } = props;
@@ -109,14 +202,23 @@ export default function Create() {
   const [tp, setTp] = useState(5);
   const [sl, setSl] = useState(3);
   const [cut, setCut] = useState(0.5);
+  // Flash order options (Placing Orders docs): entry type and the settings that belong to it.
+  const [entryType, setEntryType] = useState<EntryType>('limit');
+  const [twapMinutes, setTwapMinutes] = useState(60);
+  const [twapSlices, setTwapSlices] = useState(6);
+  const [entryExpiryHours, setEntryExpiryHours] = useState<number | null>(null);
+  const [bracketExpiryDays, setBracketExpiryDays] = useState<number | null>(null);
+  const [maxSlippagePct, setMaxSlippagePct] = useState<number | null>(null);
+  const [showOptions, setShowOptions] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
   const [info, setInfo] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const plan = useMemo(
-    () => (price ? buildPlan({ entryOffsetPct: -dip, takeProfitPct: tp, stopLossPct: sl, cutPct: cut }, price.price, 100) : null),
-    [price, dip, tp, sl, cut],
+    () =>
+      price ? buildPlan({ entryOffsetPct: -dip, takeProfitPct: tp, stopLossPct: sl, cutPct: cut, entryType }, price.price, 100) : null,
+    [price, dip, tp, sl, cut, entryType],
   );
   const reading = useMemo(() => (candles ? readChart(candles) : null), [candles]);
   const setups = useMemo(() => (reading ? setupsFrom(reading) : []), [reading]);
@@ -130,7 +232,16 @@ export default function Create() {
       setTp(round2(clamp(((plan.takeProfitPrice - e) / e) * 100, L.tp.min, L.tp.max)));
       setSl(round2(clamp(((e - plan.stopLossPrice) / e) * 100, L.sl.min, L.sl.max)));
     }
+    // Moving the buy below the price makes a market buy a limit buy, and back (DCA keeps it as its price cap).
+    if (entryType === 'market' && d > 0) setEntryType('limit');
+    if (entryType === 'limit' && d === 0) setEntryType('market');
     setDip(d);
+  };
+  const chooseEntryType = (t: EntryType) => {
+    if (t === entryType) return;
+    setEntryType(t);
+    if (t === 'market') setEntry(0);
+    if (t === 'limit' && dip === 0) setEntry(2);
   };
   const setTake = (v: number) => {
     setPicked(null);
@@ -151,6 +262,7 @@ export default function Create() {
   const applySetup = (x: Setup) => {
     Haptics.selectionAsync().catch(() => {});
     setPicked(x.key);
+    if (entryType !== 'twap') setEntryType(x.rules.dip > 0 ? 'limit' : 'market');
     setDip(x.rules.dip);
     setTp(x.rules.tp);
     setSl(x.rules.sl);
@@ -159,7 +271,13 @@ export default function Create() {
   const levels: Level[] = plan
     ? [
         { key: 'tp', price: plan.takeProfitPrice, label: `TP ${pct(tp)}`, color: colors.profit, draggable: true },
-        { key: 'entry', price: plan.entryPrice, label: dip ? `Buy ${pct(-dip)}` : 'Buy now', color: colors.ink, draggable: true },
+        {
+          key: 'entry',
+          price: plan.entryPrice,
+          label: entryType === 'twap' ? (dip ? `DCA ≤${pct(-dip)}` : 'DCA') : dip ? `Buy ${pct(-dip)}` : 'Buy now',
+          color: colors.ink,
+          draggable: true,
+        },
         { key: 'sl', price: plan.stopLossPrice, label: `SL ${pct(-sl)}`, color: colors.loss, draggable: true },
       ]
     : [];
@@ -261,17 +379,50 @@ export default function Create() {
       </Animated.View>
 
       <Card style={{ marginTop: space(4), paddingVertical: space(2) }}>
-        <Stepper
-          label="Buy"
-          hint={dip === 0 ? 'At market, right away' : 'Limit, below the price'}
-          value={dip}
-          onChange={setEntry}
-          step={0.5}
-          min={L.dip.min}
-          max={L.dip.max}
-          format={(v) => (v === 0 ? 'Now' : pct(-v))}
-          sub={plan ? fmtPrice(plan.entryPrice) : undefined}
-        />
+        <View style={{ paddingTop: space(2), paddingBottom: space(3), gap: space(2) }}>
+          <Segment
+            value={entryType}
+            onChange={chooseEntryType}
+            options={[
+              { value: 'market', label: 'Market' },
+              { value: 'limit', label: 'Limit' },
+              { value: 'twap', label: 'DCA' },
+            ]}
+          />
+          <T v="mono" style={{ fontSize: 11 }}>
+            {entryType === 'market'
+              ? 'Buys right away at the best price'
+              : entryType === 'limit'
+                ? 'Buys only when the price dips to the buy level'
+                : `Buys in ${twapSlices} slices over ${durationLabel(twapMinutes)} (Flash TWAP)`}
+          </T>
+        </View>
+        {entryType !== 'market' ? (
+          <Stepper
+            label={entryType === 'twap' ? 'Price cap' : 'Buy'}
+            hint={entryType === 'twap' ? (dip === 0 ? 'None, buys at any price' : 'Slices buy at or below') : 'Below the price'}
+            value={dip}
+            onChange={setEntry}
+            step={0.5}
+            min={entryType === 'limit' ? 0.5 : L.dip.min}
+            max={L.dip.max}
+            format={(v) => (v === 0 ? 'None' : pct(-v))}
+            sub={plan ? fmtPrice(plan.entryPrice) : undefined}
+          />
+        ) : null}
+        {entryType === 'twap' ? (
+          <Stepper
+            label="Slices"
+            hint="Equal parts of the buy"
+            value={twapSlices}
+            onChange={(v) => setTwapSlices(Math.round(v))}
+            step={1}
+            min={2}
+            max={Math.min(48, twapMinutes)}
+            format={(v) => `${Math.round(v)}`}
+            sub={`every ${durationLabel(twapMinutes / twapSlices)}`}
+          />
+        ) : null}
         <Stepper
           label="Take profit"
           hint="Above the buy"
@@ -307,6 +458,29 @@ export default function Create() {
           format={(v) => `${v.toFixed(1)}%`}
           sub={plan ? `${usd(plan.creatorFeeUsd)} per $100` : undefined}
         />
+        <Pressable onPress={() => setShowOptions((v) => !v)} style={({ pressed }) => [s.optionsRow, pressed && { opacity: 0.6 }]} accessibilityRole="button">
+          <View style={{ flex: 1 }}>
+            <T v="bodyMed">Order options</T>
+            <T v="mono" style={{ fontSize: 11 }} numberOfLines={1}>
+              {optionsSummary({ entryType, twapMinutes, entryExpiryHours, bracketExpiryDays, maxSlippagePct })}
+            </T>
+          </View>
+          {showOptions ? <ChevronUp size={18} strokeWidth={1.75} color={colors.textDim} /> : <ChevronDown size={18} strokeWidth={1.75} color={colors.textDim} />}
+        </Pressable>
+        {showOptions ? (
+          <Animated.View entering={FadeIn.duration(DUR.menu)} style={{ gap: space(4), paddingBottom: space(3) }}>
+            {entryType === 'twap' ? (
+              <Choice label="DCA duration" value={twapMinutes} onChange={(m) => { setTwapMinutes(m); setTwapSlices((n) => Math.min(n, Math.min(48, m))); }} options={TWAP_DURATIONS} />
+            ) : null}
+            {entryType === 'limit' ? (
+              <Choice label="Buy waits for" value={entryExpiryHours} onChange={setEntryExpiryHours} options={ENTRY_EXPIRY} />
+            ) : null}
+            {entryType === 'market' ? (
+              <Choice label="Max slippage" value={maxSlippagePct} onChange={setMaxSlippagePct} options={SLIPPAGE} />
+            ) : null}
+            <Choice label="Take profit and stop stay active" value={bracketExpiryDays} onChange={setBracketExpiryDays} options={BRACKET_EXPIRY} />
+          </Animated.View>
+        ) : null}
         <T v="mono" style={{ textAlign: 'center', paddingVertical: space(2), fontSize: 11 }}>
           Profit and loss shown for a $100 trade
         </T>
@@ -341,6 +515,12 @@ export default function Create() {
               stopLossPct: sl,
               cutPct: cut,
               chain,
+              entryType,
+              twapMinutes: entryType === 'twap' ? twapMinutes : null,
+              twapSlices: entryType === 'twap' ? twapSlices : null,
+              entryExpiryHours: entryType === 'limit' ? entryExpiryHours : null,
+              bracketExpiryDays,
+              maxSlippagePct: entryType === 'market' ? maxSlippagePct : null,
               proof,
             });
             setName('');
@@ -361,6 +541,27 @@ export default function Create() {
 }
 
 const s = StyleSheet.create({
+  segment: { flexDirection: 'row', padding: 3, gap: 2, borderRadius: radius.sm, backgroundColor: colors.cardHi },
+  segmentItem: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: radius.sm - 3 },
+  segmentOn: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
+  optionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space(3),
+    minHeight: 60,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.borderHi,
+  },
+  choice: {
+    paddingHorizontal: space(3),
+    height: 34,
+    justifyContent: 'center',
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.borderHi,
+    backgroundColor: colors.card,
+  },
+  choiceOn: { backgroundColor: colors.accent, borderColor: colors.ink },
   input: {
     height: 48,
     borderRadius: radius.sm,

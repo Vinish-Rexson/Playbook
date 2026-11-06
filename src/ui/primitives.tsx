@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { ArrowLeft } from 'lucide-react-native';
-import type { ReactNode } from 'react';
+import { createContext, type ReactNode, useContext, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -16,6 +16,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { T } from './Text';
 import { colors, fonts, radius, space } from './theme';
 
+/** Lets an interactive child (a chart being dragged) stop the page from scrolling while the finger is down. */
+const ScrollLock = createContext<(locked: boolean) => void>(() => {});
+export const useScrollLock = () => useContext(ScrollLock);
+
 export function Screen({
   children,
   scroll = true,
@@ -29,23 +33,29 @@ export function Screen({
   refreshing?: boolean;
   padded?: boolean;
 }) {
+  const [locked, setLocked] = useState(false);
   const pad = padded ? { paddingHorizontal: space(5) } : null;
   return (
-    <SafeAreaView edges={['top']} style={s.screen}>
-      {scroll ? (
-        <ScrollView
-          contentContainerStyle={[pad, { paddingBottom: space(32), paddingTop: space(2) }]}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          refreshControl={
-            onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textDim} /> : undefined
-          }>
-          {children}
-        </ScrollView>
-      ) : (
-        <View style={[{ flex: 1 }, pad]}>{children}</View>
-      )}
-    </SafeAreaView>
+    <ScrollLock.Provider value={setLocked}>
+      <SafeAreaView edges={['top']} style={s.screen}>
+        {scroll ? (
+          <ScrollView
+            scrollEnabled={!locked}
+            contentContainerStyle={[pad, { paddingBottom: space(32), paddingTop: space(2) }]}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={
+              onRefresh ? (
+                <RefreshControl enabled={!locked} refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textDim} />
+              ) : undefined
+            }>
+            {children}
+          </ScrollView>
+        ) : (
+          <View style={[{ flex: 1 }, pad]}>{children}</View>
+        )}
+      </SafeAreaView>
+    </ScrollLock.Provider>
   );
 }
 

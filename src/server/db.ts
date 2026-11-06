@@ -88,6 +88,12 @@ const toTemplate = (r: Row): Template => ({
   stopLossPct: r.stopLossPct,
   cutPct: r.cutPct,
   chain: r.chain ?? 'both',
+  entryType: r.entryType ?? (r.entryOffsetPct < 0 ? 'limit' : 'market'),
+  twapMinutes: r.twapMinutes ?? null,
+  twapSlices: r.twapSlices ?? null,
+  entryExpiryHours: r.entryExpiryHours ?? null,
+  bracketExpiryDays: r.bracketExpiryDays ?? null,
+  maxSlippagePct: r.maxSlippagePct ?? null,
   createdAt: ms(r.createdAt),
 });
 const opt = <T>(v: T | null) => v ?? undefined;
@@ -114,6 +120,9 @@ const toApplication = (r: Row): Application => ({
   creatorFeeUsd: r.creatorFeeUsd,
   txs: r.txs ?? [],
   closeReason: r.closeReason,
+  closeOrderId: r.closeOrderId ?? null,
+  boughtAmount: r.boughtAmount ?? null,
+  spentUsd: r.spentUsd ?? null,
   createdAt: ms(r.createdAt),
   updatedAt: ms(r.updatedAt),
 });
@@ -128,6 +137,9 @@ const APP_PATCHABLE = [
   'creatorFeeUsd',
   'txs',
   'closeReason',
+  'closeOrderId',
+  'boughtAmount',
+  'spentUsd',
 ] as const satisfies readonly (keyof Application)[];
 
 /** `funders`: the wallet's addresses on each network (its Base and Solana address). */
@@ -248,22 +260,54 @@ export const db = {
   /** Applies, wins, losses, open positions and volume per playbook, in one query. */
   async statsFor(templateIds: string[]) {
     const stats = new Map<string, TemplateStats>();
-    for (const id of templateIds) stats.set(id, { applies: 0, wins: 0, losses: 0, open: 0, volumeUsd: 0 });
+    const empty = { applies: 0, wins: 0, losses: 0, open: 0, volumeUsd: 0, pnlUsd: 0, closedUsd: 0 };
+    for (const id of templateIds) stats.set(id, { ...empty });
     if (!templateIds.length) return stats;
     const rows = await sql()`
       select template_id,
              count(*)::int                                                  as applies,
              count(*) filter (where status = 'take_profit')::int            as wins,
              count(*) filter (where status = 'stop_loss')::int              as losses,
-             count(*) filter (where status in ('waiting', 'filled'))::int   as open,
-             coalesce(sum(amount_usd), 0)::float8                           as volume_usd
+             count(*) filter (where status in ('waiting', 'filled', 'closing'))::int as open,
+             coalesce(sum(amount_usd), 0)::float8                           as volume_usd,
+             coalesce(sum(pnl_usd) filter (where status in ('take_profit', 'stop_loss', 'closed')), 0)::float8    as pnl_usd,
+             coalesce(sum(amount_usd) filter (where status in ('take_profit', 'stop_loss', 'closed')), 0)::float8 as closed_usd
       from applications
       where status <> 'failed' and template_id in ${sql()(templateIds)}
       group by template_id`;
     for (const r of rows) {
-      stats.set(r.templateId, { applies: r.applies, wins: r.wins, losses: r.losses, open: r.open, volumeUsd: r.volumeUsd });
+      stats.set(r.templateId, {
+        applies: r.applies,
+        wins: r.wins,
+        losses: r.losses,
+        open: r.open,
+        volumeUsd: r.volumeUsd,
+        pnlUsd: r.pnlUsd,
+        closedUsd: r.closedUsd,
+      });
     }
     return stats;
+  },
+
+  /** Creators with totals across their playbooks; `q` matches name or handle. House account excluded. */
+  async searchTraders(q = '', limit = 50) {
+    const s = sql();
+    const like = `%${q.trim().toLowerCase().replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+    const rows = await s`
+      select t.*,
+             count(distinct p.id)::int                                   as playbooks,
+             count(a.id) filter (where a.status <> 'failed')::int        as applies,
+             count(a.id) filter (where a.status = 'take_profit')::int    as wins,
+             count(a.id) filter (where a.status = 'stop_loss')::int      as losses
+      from traders t
+      left join templates p on p.creator = t.address
+      left join applications a on a.template_id = p.id
+      where t.official is not true
+        ${q.trim() ? s`and (lower(t.name) like ${like} or lower(t.handle) like ${like})` : s``}
+      group by t.address
+      order by count(a.id) filter (where a.status <> 'failed') desc, count(distinct p.id) desc, t.created_at desc
+      limit ${limit}`;
+    return rows.map((r) => ({ ...toTrader(r), playbooks: r.playbooks, applies: r.applies, wins: r.wins, losses: r.losses }));
   },
 
   /** Creator fees Flash reported on this creator's fills, and how many times their playbooks were applied. */

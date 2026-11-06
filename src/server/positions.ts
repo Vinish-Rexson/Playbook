@@ -1,21 +1,22 @@
-// Turns Flash order state into Playbook position status (GET /orders/{id} for the entry and its bracket).
+// Turns Flash order state into Playbook position status (GET /orders/{id} for the entry, its bracket, and the
+// market sell when the user closed the position early).
 import { NETWORKS } from '@/lib/constants';
 import type { Application, PositionStatus, TxRef } from '@/lib/types';
 
 import { db } from './db';
 import { FlashError, getOrder, type FlashOrderDetail } from './flash';
 
-const TERMINAL: PositionStatus[] = ['take_profit', 'stop_loss', 'cancelled', 'failed', 'unprotected'];
+const TERMINAL: PositionStatus[] = ['take_profit', 'stop_loss', 'cancelled', 'failed', 'unprotected', 'closed'];
 export const isTerminal = (s: PositionStatus) => TERMINAL.includes(s);
 
 const CLOSED = ['ORDER_STATUS_CANCELLED', 'ORDER_STATUS_REJECTED', 'ORDER_STATUS_TERMINATED'];
 const lastRefresh = new Map<string, number>();
 
-/** Refresh one position from Flash; throttled to once per 4s per position. */
-export async function refresh(app: Application): Promise<Application> {
-  if (isTerminal(app.status)) return app;
+/** Refresh one position from Flash; throttled to once per 4s per position (`force` skips the throttle). */
+export async function refresh(app: Application, force = false): Promise<Application> {
+  if (isTerminal(app.status) && !force) return app;
   const last = lastRefresh.get(app.id) ?? 0;
-  if (Date.now() - last < 4000) return app;
+  if (!force && Date.now() - last < 4000) return app;
   lastRefresh.set(app.id, Date.now());
   try {
     return (await refreshLive(app)) ?? app;
@@ -84,6 +85,32 @@ async function refreshLive(app: Application) {
     }
   }
 
+  // What the entry actually bought and spent (DCA and partial fills can differ from the requested amount).
+  const boughtAmount = num(o.filled?.targetAmount) || app.boughtAmount || null;
+  const spentUsd = num(o.filled?.contraAmount) || app.spentUsd || null;
+
+  // Closed early by the user: the market sell decides the outcome.
+  if (app.closeOrderId) {
+    const sell = await getOrder(app.closeOrderId, app.funder).catch((e) => {
+      if (e instanceof FlashError && e.status === 404) return null; // not readable yet: next poll
+      throw e;
+    });
+    if (sell && sell.fills.length > 0) {
+      for (const f of sell.fills) txs.push({ label: `Sold ${asset}`, hash: f.transactionId });
+      status = 'closed';
+      exitPrice = num(sell.order.filled?.averageNotionalPrice) || num(sell.fills[0]?.fillPrice);
+      const received = num(sell.order.filled?.contraAmount);
+      if (received) pnlUsd = received - (spentUsd ?? app.amountUsd);
+      closeReason = 'REASON_USER_CLOSED';
+    } else if (sell && CLOSED.includes(sell.order.status)) {
+      // The sell did not go through: still holding, with no take-profit / stop.
+      status = 'unprotected';
+      closeReason = sell.order.closeReason ?? 'REASON_CLOSE_FAILED';
+    } else {
+      status = 'closing';
+    }
+  }
+
   return db.updateApplication(app.id, {
     status,
     filledPrice,
@@ -93,5 +120,7 @@ async function refreshLive(app: Application) {
     creatorFeeUsd,
     txs,
     closeReason,
+    boughtAmount,
+    spentUsd,
   });
 }

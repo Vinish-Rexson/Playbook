@@ -2,7 +2,7 @@
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { Check, ChevronRight, Copy, Eye, EyeOff, ExternalLink, KeyRound, Lock, QrCode, Trash2, TriangleAlert } from 'lucide-react-native';
+import { ArrowUpRight, Check, ChevronRight, Copy, Eye, EyeOff, ExternalLink, KeyRound, Lock, QrCode, Trash2, TriangleAlert } from 'lucide-react-native';
 import { type ReactNode, useState } from 'react';
 import { Alert, Linking, Pressable, StyleSheet, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
@@ -175,20 +175,17 @@ export function WalletHome() {
         <>
           <Row style={{ justifyContent: 'space-between', marginTop: space(5), paddingHorizontal: space(2) }}>
             <Action
+              icon={<ArrowUpRight size={20} strokeWidth={1.75} color={colors.text} />}
+              label="Send"
+              onPress={() => router.push({ pathname: '/wallet/send', params: { chain } })}
+            />
+            <Action
               icon={<QrCode size={20} strokeWidth={1.75} color={colors.text} />}
               label="Receive"
               onPress={() => router.push({ pathname: '/wallet/receive', params: { chain } })}
             />
             <Action icon={copied ? <Check size={20} color={colors.profit} /> : <Copy size={20} strokeWidth={1.75} color={colors.text} />} label="Copy" onPress={copy} />
             <Action icon={<ExternalLink size={20} strokeWidth={1.75} color={colors.text} />} label="Explorer" onPress={() => Linking.openURL(addressUrl(addr, chain))} />
-            <Action
-              icon={<Lock size={20} strokeWidth={1.75} color={colors.text} />}
-              label="Lock"
-              onPress={() => {
-                w.lock();
-                router.replace('/unlock');
-              }}
-            />
           </Row>
 
           <T v="h2" style={{ marginTop: space(7), marginBottom: space(2) }}>

@@ -19,13 +19,17 @@ import { associatedTokenAddress, decodeLegacyMessage, messageFeeLamports, PROGRA
 import { parseTypedData } from './typedData';
 
 export type SignRequest =
-  | { kind: 'transaction'; to: Address; data: Hex }
+  /** value: ETH sent, in wei, as a decimal string (plain ETH transfers). */
+  | { kind: 'transaction'; to: Address; data: Hex; value?: string }
   | { kind: 'typedData'; json: string }
   | { kind: 'message'; message: string }
   /** Solana: Ed25519 over a UTF-8 message (Flash order or cancel). */
   | { kind: 'solMessage'; message: string }
-  /** Solana: a base64 legacy transaction message to sign (the one-time setup). */
-  | { kind: 'solTransaction'; message: string };
+  /**
+   * Solana: a base64 legacy transaction message to sign (the one-time setup, or a send). `recipient` is the
+   * wallet the app intends to pay; the sheet checks the decoded transaction really pays it.
+   */
+  | { kind: 'solTransaction'; message: string; recipient?: string };
 
 export const isSolanaRequest = (r: SignRequest) => r.kind === 'solMessage' || r.kind === 'solTransaction';
 
@@ -54,10 +58,40 @@ const nameOf = (addr: string) => {
   return TOKENS[a]?.symbol ?? shortAddr(addr);
 };
 
-function describeTx(to: Address, data: Hex): Described {
+function describeTx(to: Address, data: Hex, value?: string): Described {
   const token = TOKENS[to.toLowerCase()];
+  const wei = value ? BigInt(value) : 0n;
+  if ((data === '0x' || !data) && wei > 0n) {
+    return {
+      icon: 'approve',
+      label: 'Transaction · Base',
+      title: `Send ${formatUnits(wei, 18)} ETH`,
+      subtitle: 'Sends ETH from this wallet. Transfers cannot be reversed, so check the address.',
+      rows: [
+        { k: 'Amount', v: `${formatUnits(wei, 18)} ETH` },
+        { k: 'To', v: shortAddr(to) },
+        { k: 'Network', v: 'Base' },
+      ],
+    };
+  }
   try {
     const call = decodeFunctionData({ abi: erc20Abi, data });
+    if (call.functionName === 'transfer') {
+      const [recipient, amount] = call.args;
+      const sym = token?.symbol ?? shortAddr(to);
+      return {
+        icon: 'approve',
+        label: 'Transaction · Base',
+        title: `Send ${formatUnits(amount, token?.decimals ?? 18)} ${sym}`,
+        subtitle: 'Sends tokens from this wallet. Transfers cannot be reversed, so check the address.',
+        rows: [
+          { k: 'Amount', v: `${formatUnits(amount, token?.decimals ?? 18)} ${sym}` },
+          { k: 'To', v: shortAddr(recipient) },
+          { k: 'Network', v: 'Base' },
+        ],
+        warning: token ? undefined : 'This is not a token Playbook knows. Only confirm if you started it.',
+      };
+    }
     if (call.functionName === 'approve') {
       const [spender, amount] = call.args;
       const sym = token?.symbol ?? shortAddr(to);
@@ -179,10 +213,15 @@ export function solanaTxCost(messageB64: string) {
   const created = m.instructions.filter((i) => i.programId === PROGRAMS.ata).length;
   const feeSol = messageFeeLamports(m) / 1e9;
   const rentSol = created * TOKEN_ACCOUNT_RENT_SOL;
-  return { feeSol, rentSol, totalSol: feeSol + rentSol, payer: m.feePayer };
+  // SOL leaving the wallet in plain transfers (SystemProgram.transfer = instruction 2, lamports u64 at byte 4).
+  const sentSol =
+    m.instructions
+      .filter((i) => i.programId === PROGRAMS.system && i.data[0] === 2 && i.accounts[0]?.pubkey === m.feePayer)
+      .reduce((sum, i) => sum + Number(new DataView(i.data.buffer, i.data.byteOffset, i.data.byteLength).getBigUint64(4, true)), 0) / 1e9;
+  return { feeSol, rentSol, sentSol, totalSol: feeSol + rentSol + sentSol, payer: m.feePayer };
 }
 
-function describeSolTransaction(messageB64: string): Described {
+function describeSolTransaction(messageB64: string, recipient?: string): Described {
   try {
     const m = decodeLegacyMessage(base64.decode(messageB64));
     const owner = m.feePayer;
@@ -191,11 +230,34 @@ function describeSolTransaction(messageB64: string): Described {
     );
     const rows: { k: string; v: string }[] = [];
     let unknown = false;
+    let send: string | null = null;
+    const dv = (d: Uint8Array) => new DataView(d.buffer, d.byteOffset, d.byteLength);
     for (const ix of m.instructions) {
       if (ix.programId === PROGRAMS.computeBudget) continue;
-      if (ix.programId === PROGRAMS.ata) {
+      if (ix.programId === PROGRAMS.system && ix.data[0] === 2) {
+        const sol = Number(dv(ix.data).getBigUint64(4, true)) / 1e9;
+        const to = ix.accounts[1]?.pubkey ?? '';
+        send = `Send ${sol} SOL`;
+        rows.push({ k: 'Amount', v: `${sol} SOL` }, { k: 'To', v: shortAddr(to) });
+        if (recipient && to !== recipient) unknown = true;
+      } else if ((ix.programId === PROGRAMS.token || ix.programId === PROGRAMS.token2022) && ix.data[0] === 12) {
+        const [, mintAcc, dest] = ix.accounts;
+        const mint = mintAcc?.pubkey ?? '';
+        const tok = SOL_TOKENS[mint];
+        const amount = Number(dv(ix.data).getBigUint64(1, true)) / 10 ** ix.data[9];
+        const sym = tok?.symbol ?? shortAddr(mint);
+        send = `Send ${amount} ${sym}`;
+        // The destination is the recipient's token account; confirm it belongs to the intended wallet.
+        const paysRecipient = !!recipient && associatedTokenAddress(recipient, mint) === dest?.pubkey;
+        rows.push({ k: 'Amount', v: `${amount} ${sym}` }, { k: 'To', v: paysRecipient ? shortAddr(recipient) : `token account ${shortAddr(dest?.pubkey)}` });
+        if (!paysRecipient) unknown = true;
+      } else if (ix.programId === PROGRAMS.ata) {
         const mint = ix.accounts[3]?.pubkey ?? '';
-        rows.push({ k: `Create ${SOL_TOKENS[mint]?.symbol ?? shortAddr(mint)} account`, v: 'Token account' });
+        const forOwner = ix.accounts[2]?.pubkey;
+        rows.push({
+          k: forOwner && forOwner !== owner ? `Create recipient's ${SOL_TOKENS[mint]?.symbol ?? shortAddr(mint)} account` : `Create ${SOL_TOKENS[mint]?.symbol ?? shortAddr(mint)} account`,
+          v: 'Token account',
+        });
       } else if ((ix.programId === PROGRAMS.token || ix.programId === PROGRAMS.token2022) && ix.data[0] === 4) {
         const [source, delegate] = ix.accounts;
         const who = delegate?.pubkey === FLASH_SOLANA_DELEGATE ? 'Definitive Flash' : shortAddr(delegate?.pubkey);
@@ -205,6 +267,16 @@ function describeSolTransaction(messageB64: string): Described {
         rows.push({ k: 'Call', v: shortAddr(ix.programId) });
         unknown = true;
       }
+    }
+    if (send) {
+      return {
+        icon: 'approve',
+        label: 'Transaction · Solana',
+        title: send,
+        subtitle: 'Sends from this wallet. Transfers cannot be reversed, so check the address.',
+        rows: [...rows, { k: 'Network', v: 'Solana' }],
+        warning: unknown ? 'This transfer does not match the address you entered. Do not confirm it.' : undefined,
+      };
     }
     return {
       icon: 'approve',
@@ -222,8 +294,8 @@ function describeSolTransaction(messageB64: string): Described {
 
 export function describe(req: SignRequest): Described {
   if (req.kind === 'solMessage') return describeSolMessage(req.message);
-  if (req.kind === 'solTransaction') return describeSolTransaction(req.message);
-  if (req.kind === 'transaction') return describeTx(req.to, req.data);
+  if (req.kind === 'solTransaction') return describeSolTransaction(req.message, req.recipient);
+  if (req.kind === 'transaction') return describeTx(req.to, req.data, req.value);
   if (req.kind === 'typedData') {
     try {
       return describeTypedData(req.json);

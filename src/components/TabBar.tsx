@@ -1,7 +1,7 @@
 // Floating ink tab bar (Creso-style): icons only, the active tab gets a white icon and a lime marker
 // that slides between tabs.
 import * as Haptics from 'expo-haptics';
-import { Activity, Compass, Plus, UserRound } from 'lucide-react-native';
+import { Activity, Compass, Plus, Trophy, UserRound } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
@@ -9,8 +9,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, DUR, EASE, radius, space } from '@/ui/theme';
 
-const ICONS: Record<string, typeof Compass> = { discover: Compass, create: Plus, positions: Activity, profile: UserRound };
-const LABELS: Record<string, string> = { discover: 'Discover', create: 'Create', positions: 'Positions', profile: 'Profile' };
+const ICONS: Record<string, typeof Compass> = { discover: Compass, leaderboard: Trophy, create: Plus, positions: Activity, profile: UserRound };
+const LABELS: Record<string, string> = { discover: 'Discover', leaderboard: 'Leaderboard', create: 'Create', positions: 'Positions', profile: 'Wallet' };
 
 type TabBarProps = {
   state: { index: number; routes: { key: string; name: string }[] };

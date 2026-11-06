@@ -1,4 +1,5 @@
 import { router } from 'expo-router';
+import { Search } from 'lucide-react-native';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import Animated, { Easing, FadeInDown } from 'react-native-reanimated';
@@ -28,7 +29,15 @@ export default function Discover() {
     <Screen onRefresh={reload} refreshing={refreshing}>
       <Row style={{ justifyContent: 'space-between', marginTop: space(3), marginBottom: space(5) }}>
         <T v="h1">Discover</T>
-        <ModeBadge />
+        <Row gap={10}>
+          <ModeBadge />
+          <Pressable
+            onPress={() => router.push('/search')}
+            style={({ pressed }) => [st.iconBtn, { transform: [{ scale: pressed ? 0.94 : 1 }] }]}
+            accessibilityLabel="Search creators">
+            <Search size={18} strokeWidth={1.75} color={colors.text} />
+          </Pressable>
+        </Row>
       </Row>
 
       <MarketCard />
@@ -73,6 +82,16 @@ export default function Discover() {
 }
 
 const st = StyleSheet.create({
+  iconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
   sort: {
     flex: 1,
     height: 44,

@@ -5,18 +5,38 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { NETWORK_DOT } from '@/components/NetworkSwitch';
 import { NETWORKS } from '@/lib/constants';
-import { pct } from '@/lib/pricing';
-import type { PositionStatus, TemplateWithMeta } from '@/lib/types';
+import { durationLabel, entryTypeOf, pct } from '@/lib/pricing';
+import type { OrderOptions, PositionStatus, TemplateWithMeta } from '@/lib/types';
 import { Avatar, Pill, Row } from '@/ui/primitives';
 import { T } from '@/ui/Text';
 import { colors, radius, space } from '@/ui/theme';
 
-type Rules = Pick<TemplateWithMeta, 'entryOffsetPct' | 'takeProfitPct' | 'stopLossPct'> & Partial<Pick<TemplateWithMeta, 'chain'>>;
+type Rules = Pick<TemplateWithMeta, 'entryOffsetPct' | 'takeProfitPct' | 'stopLossPct'> &
+  Partial<Pick<TemplateWithMeta, 'chain' | 'entryType' | 'twapMinutes'>>;
+
+/** One line describing how the order is placed, e.g. "DCA over 1h in 6 slices · protection always on". */
+export function orderSummary(t: Partial<OrderOptions> & Pick<TemplateWithMeta, 'entryOffsetPct'>) {
+  const type = entryTypeOf(t);
+  const first =
+    type === 'twap'
+      ? `DCA over ${durationLabel(t.twapMinutes ?? 60)} in ${t.twapSlices ?? 6} slices${t.entryOffsetPct < 0 ? `, at or below ${pct(t.entryOffsetPct)}` : ''}`
+      : type === 'limit'
+        ? `Limit buy, ${t.entryExpiryHours ? `waits ${durationLabel(t.entryExpiryHours * 60)}` : 'waits until filled'}`
+        : `Market buy, ${t.maxSlippagePct ? `${t.maxSlippagePct}% max slippage` : 'auto slippage'}`;
+  return `${first} · protection ${t.bracketExpiryDays ? `for ${t.bracketExpiryDays}d` : 'always on'}`;
+}
 
 /** The three rules as one ticket-style strip: Buy · Take profit · Stop. */
 export function RuleChips({ t }: { t: Rules }) {
+  const type = entryTypeOf(t);
+  const buy =
+    type === 'twap'
+      ? `DCA ${durationLabel(t.twapMinutes ?? 60)}`
+      : type === 'limit'
+        ? pct(t.entryOffsetPct)
+        : 'Now';
   const cells = [
-    { k: 'Buy', v: t.entryOffsetPct < 0 ? pct(t.entryOffsetPct) : 'Now', c: colors.text },
+    { k: 'Buy', v: buy, c: colors.text },
     { k: 'Take profit', v: pct(t.takeProfitPct), c: colors.profit },
     { k: 'Stop', v: pct(-t.stopLossPct), c: colors.loss },
   ];
@@ -101,6 +121,8 @@ export const statusMeta: Record<PositionStatus, { label: string; color: string }
   cancelled: { label: 'Cancelled', color: colors.textMute },
   failed: { label: 'Failed', color: colors.loss },
   unprotected: { label: 'Protection ended', color: colors.warn },
+  closing: { label: 'Closing', color: colors.warn },
+  closed: { label: 'Closed by you', color: colors.textDim },
 };
 
 export function StatusPill({ status }: { status: PositionStatus }) {

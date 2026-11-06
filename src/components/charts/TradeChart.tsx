@@ -13,7 +13,7 @@ import Svg, { G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 import type { Candle, Timeframe } from '@/lib/api';
 import { clamp, fmtPrice, fmtTime, niceTicks } from '@/lib/chartMath';
-import { Row } from '@/ui/primitives';
+import { Row, useScrollLock } from '@/ui/primitives';
 import { T } from '@/ui/Text';
 import { colors, fonts, radius, space } from '@/ui/theme';
 
@@ -93,6 +93,8 @@ export function TradeChart({
   const [win, setWin] = useState<Win | null>(null);
   const [cross, setCross] = useState<{ x: number; y: number } | null>(null);
   const [drag, setDrag] = useState<{ key: LevelKey; price: number; scale: Scale } | null>(null);
+  // While a level is dragged (or the chart is pinched / inspected) the page must not scroll.
+  const lockScroll = useScrollLock();
 
   const data = useMemo(() => {
     if (!candles?.length) return null;
@@ -160,7 +162,8 @@ export function TradeChart({
     s.hold = null;
   };
 
-  const onGrant = (e: GestureResponderEvent) => {
+  /** Returns true when a level is grabbed: that blocks the page's native scroll for this touch (Android). */
+  const onGrant = (e: GestureResponderEvent): boolean => {
     const s = gest.current;
     const { locationX: x, locationY: y, pageX } = e.nativeEvent;
     s.mode = null;
@@ -177,17 +180,20 @@ export function TradeChart({
         s.dragKey = hit.l.key;
         s.dragPrice = hit.l.price;
         setDrag({ key: hit.l.key, price: hit.l.price, scale: sc });
+        lockScroll(true);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-        return;
+        return true;
       }
     }
     s.hold = setTimeout(() => {
       if (gest.current.mode === null) {
         gest.current.mode = 'cross';
         setCross({ x, y });
+        lockScroll(true);
         Haptics.selectionAsync().catch(() => {});
       }
     }, 260);
+    return false;
   };
 
   /** Applies the latest touch position once per frame. */
@@ -204,6 +210,7 @@ export function TradeChart({
         s.mode = 'pinch';
         s.start = { ...s.start, end: v.end, count: v.count, dist, mid };
         setCross(null);
+        lockScroll(true);
         return;
       }
       // Keep the candle under the fingers' midpoint under it while zooming and panning.
@@ -253,6 +260,7 @@ export function TradeChart({
     s.pending = null;
     setDrag(null);
     setCross(null);
+    lockScroll(false);
   };
 
   const touch = {

@@ -14,6 +14,7 @@ export default function TabsLayout() {
       tabBar={(props) => <TabBar state={props.state} onSelect={props.navigateToTab} />}
       screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: colors.bg } }}>
       <Tabs.Screen name="discover" options={{ title: 'Discover' }} />
+      <Tabs.Screen name="leaderboard" options={{ title: 'Leaderboard' }} />
       <Tabs.Screen name="create" options={{ title: 'Create' }} />
       <Tabs.Screen name="positions" options={{ title: 'Positions' }} />
       <Tabs.Screen name="profile" options={{ title: 'Profile' }} />

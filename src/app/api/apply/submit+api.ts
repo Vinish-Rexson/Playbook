@@ -10,12 +10,18 @@ import { isSolanaSignature } from '@/wallet/solanaKeys';
 const isSig = (s: unknown): s is string => typeof s === 'string' && /^0x[0-9a-fA-F]{130,}$/.test(s);
 const isHash = (s: unknown): s is string => typeof s === 'string' && /^0x[0-9a-fA-F]{64}$/.test(s);
 
+/** The quote request minus quote-only fields: Flash takes durationSeconds on /quote only (TWAP Order docs). */
+const orderFields = (body: Record<string, any>) => {
+  const { durationSeconds: _quoteOnly, ...rest } = body;
+  return rest;
+};
+
 /** Base: EIP-712 signatures (plus Permit2 when Flash asked for it). */
 function baseOrder(pq: PendingQuote, b: Record<string, any>) {
   if (!isSig(b.userSignature) || !isSig(b.bracketSignature)) throw new Error('Both order signatures are required');
   if (!pq.typed.order || !pq.bracket) throw new Error('This quote has no protection order. Tap Apply again.');
   const order: Record<string, any> = {
-    ...pq.body,
+    ...orderFields(pq.body),
     quoteId: pq.quoteId,
     userSignature: b.userSignature,
     evmOrderTypedData: pq.typed.order,
@@ -48,7 +54,7 @@ function solanaOrder(pq: PendingQuote, b: Record<string, any>) {
   }
   if (!pq.svm || !pq.bracket) throw new Error('This quote has no protection order. Tap Apply again.');
   const order: Record<string, any> = {
-    ...pq.body,
+    ...orderFields(pq.body),
     quoteId: pq.quoteId,
     userSignature: b.userSignature,
     svmNonce: pq.svm.nonce,

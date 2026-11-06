@@ -2,9 +2,11 @@ import { db, HOUSE } from '@/server/db';
 import { fail, isAddress, ok } from '@/server/http';
 import { assertOwner } from '@/server/ownership';
 
-export async function GET() {
+/** GET /api/traders?q=… → creators matching the name or handle, with totals (most applied first). */
+export async function GET(request: Request) {
   try {
-    return ok({ traders: await db.listTraders() });
+    const q = (new URL(request.url).searchParams.get('q') ?? '').slice(0, 40);
+    return ok({ traders: await db.searchTraders(q) });
   } catch (e) {
     return fail(e);
   }

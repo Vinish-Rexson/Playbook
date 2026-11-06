@@ -1,9 +1,10 @@
-// Discover's market card: live ETH / SOL price with a real price chart (1D to 1Y). Drag across it to read
+// Discover's market card: live ETH / SOL price with a real price chart (1D to 1Y), green above the range's opening
+// price and red below it (dashed baseline). Drag across it to read
 // any point.
 import * as Haptics from 'expo-haptics';
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View, type GestureResponderEvent } from 'react-native';
-import Svg, { Defs, Line, LinearGradient as SvgGradient, Path, Stop, Circle } from 'react-native-svg';
+import Svg, { Circle, ClipPath, Defs, G, Line, Path, Rect } from 'react-native-svg';
 
 import { NETWORK_DOT } from '@/components/NetworkSwitch';
 import { useCandles } from '@/hooks/useCandles';
@@ -12,7 +13,7 @@ import type { Timeframe } from '@/lib/api';
 import { fmtTime } from '@/lib/chartMath';
 import { usd } from '@/lib/pricing';
 import { CHAINS, NETWORKS, type Chain } from '@/lib/constants';
-import { Row } from '@/ui/primitives';
+import { Row, useScrollLock } from '@/ui/primitives';
 import { T } from '@/ui/Text';
 import { colors, fonts, radius, space } from '@/ui/theme';
 
@@ -43,7 +44,10 @@ export function MarketCard() {
     const x = (i: number) => (i / (closes.length - 1)) * width;
     const y = (p: number) => 6 + ((hi + pad - p) / (hi - lo + 2 * pad)) * (H - 12);
     const line = closes.map((c, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(c).toFixed(1)}`).join('');
-    return { closes, x, y, line, area: `${line}L${width},${H}L0,${H}Z` };
+    // Baseline = the price at the start of the range: green above it, red below it.
+    const base = y(closes[0]);
+    const area = `${line}L${width.toFixed(1)},${base.toFixed(1)}L0,${base.toFixed(1)}Z`;
+    return { closes, x, y, line, area, base };
   }, [data, width, live]);
 
   const pick = (px: number) => {
@@ -51,18 +55,25 @@ export function MarketCard() {
     const i = Math.round((px / width) * (geo.closes.length - 1));
     setHover(Math.max(0, Math.min(geo.closes.length - 1, i)));
   };
-  // Scrub with one finger (React Native responder props on an overlay).
+  // Scrub with one finger (React Native responder props on an overlay); the page holds still meanwhile.
+  const lockScroll = useScrollLock();
+  const release = () => {
+    setHover(null);
+    lockScroll(false);
+  };
   const touch = {
     onStartShouldSetResponder: () => true,
     onMoveShouldSetResponder: () => true,
     onResponderTerminationRequest: () => false,
     onResponderGrant: (e: GestureResponderEvent) => {
       Haptics.selectionAsync().catch(() => {});
+      lockScroll(true);
       pick(e.nativeEvent.locationX);
+      return true;
     },
     onResponderMove: (e: GestureResponderEvent) => pick(e.nativeEvent.locationX),
-    onResponderRelease: () => setHover(null),
-    onResponderTerminate: () => setHover(null),
+    onResponderRelease: release,
+    onResponderTerminate: release,
   };
 
   const first = geo?.closes[0];
@@ -115,21 +126,34 @@ export function MarketCard() {
           <>
             <Svg width={width} height={H}>
               <Defs>
-                <SvgGradient id="fill" x1="0" y1="0" x2="0" y2="1">
-                  <Stop offset="0" stopColor={colors.ink} stopOpacity={0.08} />
-                  <Stop offset="1" stopColor={colors.ink} stopOpacity={0} />
-                </SvgGradient>
+                <ClipPath id="above">
+                  <Rect x={0} y={0} width={width} height={geo.base} />
+                </ClipPath>
+                <ClipPath id="below">
+                  <Rect x={0} y={geo.base} width={width} height={H - geo.base} />
+                </ClipPath>
               </Defs>
-              <Path d={geo.area} fill="url(#fill)" />
-              <Path d={geo.line} stroke={colors.ink} strokeWidth={1.75} fill="none" strokeLinejoin="round" />
-              {hover !== null ? (
-                <>
-                  <Line x1={geo.x(hover)} x2={geo.x(hover)} y1={0} y2={H} stroke={colors.textMute} strokeDasharray="3 4" />
-                  <Circle cx={geo.x(hover)} cy={geo.y(geo.closes[hover])} r={6} fill={colors.accent} stroke={colors.ink} strokeWidth={1.5} />
-                </>
-              ) : (
-                <Circle cx={geo.x(geo.closes.length - 1)} cy={geo.y(geo.closes.at(-1)!)} r={5} fill={colors.accent} stroke={colors.ink} strokeWidth={1.5} />
-              )}
+              <G clipPath="url(#above)">
+                <Path d={geo.area} fill={colors.profit} opacity={0.12} />
+                <Path d={geo.line} stroke={colors.profit} strokeWidth={1.75} fill="none" strokeLinejoin="round" />
+              </G>
+              <G clipPath="url(#below)">
+                <Path d={geo.area} fill={colors.loss} opacity={0.12} />
+                <Path d={geo.line} stroke={colors.loss} strokeWidth={1.75} fill="none" strokeLinejoin="round" />
+              </G>
+              <Line x1={0} x2={width} y1={geo.base} y2={geo.base} stroke={colors.textMute} strokeWidth={1} strokeDasharray="3 4" />
+              {(() => {
+                const i = hover ?? geo.closes.length - 1;
+                const above = geo.closes[i] >= geo.closes[0];
+                return (
+                  <>
+                    {hover !== null ? (
+                      <Line x1={geo.x(i)} x2={geo.x(i)} y1={0} y2={H} stroke={colors.textMute} strokeDasharray="3 4" />
+                    ) : null}
+                    <Circle cx={geo.x(i)} cy={geo.y(geo.closes[i])} r={hover !== null ? 6 : 5} fill={above ? colors.profit : colors.loss} stroke={colors.card} strokeWidth={2} />
+                  </>
+                );
+              })()}
             </Svg>
             <View style={StyleSheet.absoluteFill} {...touch} />
           </>

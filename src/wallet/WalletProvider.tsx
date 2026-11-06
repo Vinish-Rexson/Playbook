@@ -49,12 +49,19 @@ export type Wallet = {
   removeWallet: () => Promise<boolean>;
   signTypedData: (json: string) => Promise<string>;
   signMessage: (message: string) => Promise<string>;
-  sendTransaction: (tx: { to: string; data: string }) => Promise<Hex>;
+  /**
+   * Base transaction (value: ETH in wei). `opts.auth` adds a fingerprint / PIN check after the user confirms
+   * the sheet, used for withdrawals.
+   */
+  sendTransaction: (tx: { to: string; data: string; value?: bigint }, opts?: SendOpts) => Promise<Hex>;
   /** Solana: Ed25519 over a UTF-8 message (Flash orders and cancels); base58 signature. */
   signSolanaMessage: (message: string) => Promise<string>;
   /** Solana: signs a base64 transaction message after the user confirms it; base58 signature. */
-  signSolanaTransaction: (messageB64: string) => Promise<string>;
+  signSolanaTransaction: (messageB64: string, opts?: SendOpts & { recipient?: string }) => Promise<string>;
 };
+
+/** auth: prompt shown for the fingerprint / PIN check after the sheet is confirmed. */
+type SendOpts = { auth?: string };
 
 const WalletContext = createContext<Wallet | null>(null);
 
@@ -204,9 +211,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         await confirm({ kind: 'message', message });
         return s.signMessage(message);
       },
-      sendTransaction: async (tx) => {
+      sendTransaction: async (tx, opts) => {
         const s = live();
-        await confirm({ kind: 'transaction', to: tx.to as Address, data: tx.data as Hex });
+        await confirm({ kind: 'transaction', to: tx.to as Address, data: tx.data as Hex, value: tx.value ? tx.value.toString() : undefined });
+        if (opts?.auth && !(await authenticate(opts.auth))) throw new Error('Not confirmed with your fingerprint or PIN.');
         return s.sendTransaction(tx);
       },
       signSolanaMessage: async (message) => {
@@ -214,9 +222,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         await confirm({ kind: 'solMessage', message });
         return s.signMessage(message);
       },
-      signSolanaTransaction: async (messageB64) => {
+      signSolanaTransaction: async (messageB64, opts) => {
         const s = sol();
-        await confirm({ kind: 'solTransaction', message: messageB64 });
+        await confirm({ kind: 'solTransaction', message: messageB64, recipient: opts?.recipient });
+        if (opts?.auth && !(await authenticate(opts.auth))) throw new Error('Not confirmed with your fingerprint or PIN.');
         return s.signBytes(base64.decode(messageB64));
       },
     };

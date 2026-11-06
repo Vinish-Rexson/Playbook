@@ -8,7 +8,7 @@ import { ApplySheet, freshSteps, type StepView } from '@/components/ApplySheet';
 import { TradeChart } from '@/components/charts/TradeChart';
 import { ModeBadge } from '@/components/ModeBadge';
 import { NetworkSwitch } from '@/components/NetworkSwitch';
-import { NetworkTag, RuleChips, StatusPill } from '@/components/Playbook';
+import { NetworkTag, orderSummary, RuleChips, StatusPill } from '@/components/Playbook';
 import { useCandles } from '@/hooks/useCandles';
 import { useFetch } from '@/hooks/useFetch';
 import { usePrice } from '@/hooks/usePrice';
@@ -108,11 +108,19 @@ export default function TemplateScreen() {
           <Avatar name={t.trader?.name} tone={t.trader?.avatar} size={48} />
           <View style={{ flex: 1 }}>
             <T v="h1">{t.name}</T>
-            <T v="small">by {t.trader?.name ?? 'Unknown'}</T>
+            <Pressable
+              onPress={() => router.push({ pathname: '/trader/[address]', params: { address: t.creator } })}
+              hitSlop={6}
+              accessibilityRole="link">
+              <T v="small" color={colors.text} style={{ textDecorationLine: 'underline' }}>
+                by {t.trader?.name ?? 'Unknown'}
+              </T>
+            </Pressable>
           </View>
         </Row>
         {t.description ? <T v="body">{t.description}</T> : null}
         <RuleChips t={t} />
+        <T v="mono">{orderSummary(t)}</T>
         <View style={st.stats}>
           {[
             { k: 'Applied', v: String(t.stats.applies) },
@@ -156,7 +164,7 @@ export default function TemplateScreen() {
               <T v="small">If you apply now</T>
               <T v="numLg">{price ? usd(price.price) : '—'}</T>
             </View>
-            <T v="mono">{plan ? (plan.orderType === 'market' ? 'Market buy' : 'Limit buy') : ''}</T>
+            <T v="mono">{plan ? (plan.orderType === 'market' ? 'Market buy' : plan.orderType === 'twap' ? 'DCA buy' : 'Limit buy') : ''}</T>
           </Row>
           <TradeChart
             candles={candles}
@@ -171,7 +179,7 @@ export default function TemplateScreen() {
                     {
                       key: 'entry',
                       price: plan.entryPrice,
-                      label: plan.orderType === 'market' ? 'Buy now' : `Buy ${fmtPrice(plan.entryPrice)}`,
+                      label: plan.orderType === 'market' ? 'Buy now' : plan.orderType === 'twap' ? (plan.entryPrice < plan.marketPrice ? `DCA ≤${fmtPrice(plan.entryPrice)}` : 'DCA') : `Buy ${fmtPrice(plan.entryPrice)}`,
                       color: colors.ink,
                     },
                     { key: 'sl', price: plan.stopLossPrice, label: `SL ${fmtPrice(plan.stopLossPrice)}`, color: colors.loss },
@@ -264,7 +272,8 @@ export default function TemplateScreen() {
         onClose={() => setSheet(false)}
         onViewPosition={() => {
           setSheet(false);
-          router.navigate('/positions');
+          if (result) router.push({ pathname: '/position/[id]', params: { id: result.id } });
+          else router.navigate('/positions');
         }}
       />
     </Screen>
