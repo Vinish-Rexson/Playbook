@@ -193,7 +193,7 @@ const st = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: '#3DD6FF14',
+    backgroundColor: colors.cardHi,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -227,6 +227,6 @@ const st = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  optRight: { borderColor: '#2EE6A688', backgroundColor: '#2EE6A614' },
-  optWrong: { borderColor: '#FF5C7A88', backgroundColor: '#FF5C7A14' },
+  optRight: { borderColor: '#A9DCC3', backgroundColor: colors.profitSoft },
+  optWrong: { borderColor: '#F0C9CB', backgroundColor: colors.lossSoft },
 });

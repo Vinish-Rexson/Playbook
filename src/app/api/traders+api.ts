@@ -1,5 +1,6 @@
 import { db, HOUSE } from '@/server/db';
 import { fail, isAddress, ok } from '@/server/http';
+import { assertOwner } from '@/server/ownership';
 
 export async function GET() {
   try {
@@ -9,12 +10,13 @@ export async function GET() {
   }
 }
 
-/** Create or update a trader profile. No verification by design: the template stats speak. */
+/** Create or update a trader profile. The wallet must sign, so nobody can edit a profile they don't own. */
 export async function POST(request: Request) {
   try {
     const b = await request.json();
     if (!isAddress(b.address)) throw new Error('A wallet address is required');
     if (b.address.toLowerCase() === HOUSE) throw new Error('That address is reserved');
+    await assertOwner('Save creator profile', b.address, b.proof);
     const name = String(b.name ?? '').trim().slice(0, 40);
     if (name.length < 2) throw new Error('Pick a display name (2+ characters)');
     const handle = String(b.handle ?? name)
@@ -26,7 +28,7 @@ export async function POST(request: Request) {
       name,
       handle: handle || 'trader',
       bio: String(b.bio ?? '').trim().slice(0, 140),
-      avatar: String(b.avatar ?? '🦊').slice(0, 4),
+      avatar: String(b.avatar ?? 'lime').slice(0, 4),
     });
     return ok({ trader });
   } catch (e) {

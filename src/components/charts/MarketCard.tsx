@@ -1,7 +1,6 @@
 // Discover's market card: live ETH / SOL price with a real price chart (1D to 1Y). Drag across it to read
 // any point.
 import * as Haptics from 'expo-haptics';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View, type GestureResponderEvent } from 'react-native';
 import Svg, { Defs, Line, LinearGradient as SvgGradient, Path, Stop, Circle } from 'react-native-svg';
@@ -10,11 +9,12 @@ import { NETWORK_DOT } from '@/components/NetworkSwitch';
 import { useCandles } from '@/hooks/useCandles';
 import { usePrice } from '@/hooks/usePrice';
 import type { Timeframe } from '@/lib/api';
-import { fmtPrice, fmtTime } from '@/lib/chartMath';
+import { fmtTime } from '@/lib/chartMath';
+import { usd } from '@/lib/pricing';
 import { CHAINS, NETWORKS, type Chain } from '@/lib/constants';
 import { Row } from '@/ui/primitives';
 import { T } from '@/ui/Text';
-import { colors, radius, space } from '@/ui/theme';
+import { colors, fonts, radius, space } from '@/ui/theme';
 
 const RANGES: { label: string; tf: Timeframe; n: number }[] = [
   { label: '1D', tf: '15m', n: 96 },
@@ -32,7 +32,6 @@ export function MarketCard() {
   const live = usePrice(chain);
   const all = useCandles(chain, range.tf);
   const data = useMemo(() => (all ? all.slice(-range.n) : null), [all, range.n]);
-  const net = NETWORKS[chain];
 
   const geo = useMemo(() => {
     if (!data || data.length < 2 || !width) return null;
@@ -71,11 +70,12 @@ export function MarketCard() {
   const change = first && shown ? ((shown - first) / first) * 100 : null;
   const up = (change ?? 0) >= 0;
   const tone = up ? colors.profit : colors.loss;
+  const since = range.label === '1D' ? 'vs 24h ago' : range.label === '1W' ? 'vs a week ago' : range.label === '1M' ? 'vs a month ago' : 'vs a year ago';
 
   return (
-    <LinearGradient colors={['#1C1640', '#101528']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={st.card}>
+    <View style={st.card}>
       <Row style={{ justifyContent: 'space-between' }}>
-        <Row gap={6}>
+        <View style={st.seg}>
           {CHAINS.map((c) => (
             <Pressable
               key={c}
@@ -83,94 +83,78 @@ export function MarketCard() {
                 setChain(c);
                 setHover(null);
               }}
-              style={[st.tab, c === chain && st.tabOn]}>
+              style={[st.segItem, c === chain && st.segOn]}>
               <View style={[st.dot, { backgroundColor: NETWORK_DOT[c] }]} />
-              <T v="small" color={c === chain ? colors.text : colors.textDim} style={{ fontFamily: 'Inter_600SemiBold' }}>
-                {NETWORKS[c].asset} · {NETWORKS[c].name}
+              <T v="small" color={c === chain ? colors.text : colors.textDim} style={{ fontFamily: fonts.bodyMed }}>
+                {NETWORKS[c].asset}
               </T>
             </Pressable>
           ))}
-        </Row>
+        </View>
         <Row gap={6}>
           <View style={[st.dot, { backgroundColor: live ? colors.profit : colors.textMute }]} />
-          <T v="small">{live ? 'Live' : '…'}</T>
+          <T v="mono">{live ? 'Live · Flash' : 'Connecting'}</T>
         </Row>
       </Row>
 
-      <Row style={{ alignItems: 'flex-end', marginTop: space(3) }} gap={10}>
-        <T v="hero" style={{ fontSize: 34 }}>
-          {shown ? fmtPrice(shown) : '—'}
-        </T>
+      <T v="hero" style={{ marginTop: space(4) }}>
+        {shown ? usd(shown) : '—'}
+      </T>
+      <Row gap={8} style={{ marginTop: 2 }}>
         {change !== null ? (
-          <T v="num" color={tone} style={{ marginBottom: 6 }}>
-            {up ? '▲' : '▼'} {Math.abs(change).toFixed(2)}%
+          <T v="num" color={tone} style={{ fontSize: 14 }}>
+            {up ? '+' : '−'}
+            {Math.abs(change).toFixed(2)}%
           </T>
         ) : null}
+        <T v="small">{hover !== null && data ? fmtTime(data[hover].t, range.tf) : since}</T>
       </Row>
-      <T v="small">
-        {hover !== null && data ? fmtTime(data[hover].t, range.tf) : `${net.asset} past ${range.label === '1D' ? 'day' : range.label === '1W' ? 'week' : range.label === '1M' ? 'month' : 'year'}`}
-      </T>
 
-      <View style={{ height: H, marginTop: space(3) }} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      <View style={{ height: H, marginTop: space(4) }} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
         {geo ? (
           <>
             <Svg width={width} height={H}>
               <Defs>
                 <SvgGradient id="fill" x1="0" y1="0" x2="0" y2="1">
-                  <Stop offset="0" stopColor={tone} stopOpacity={0.28} />
-                  <Stop offset="1" stopColor={tone} stopOpacity={0} />
+                  <Stop offset="0" stopColor={colors.ink} stopOpacity={0.08} />
+                  <Stop offset="1" stopColor={colors.ink} stopOpacity={0} />
                 </SvgGradient>
               </Defs>
               <Path d={geo.area} fill="url(#fill)" />
-              <Path d={geo.line} stroke={tone} strokeWidth={2} fill="none" strokeLinejoin="round" />
+              <Path d={geo.line} stroke={colors.ink} strokeWidth={1.75} fill="none" strokeLinejoin="round" />
               {hover !== null ? (
                 <>
                   <Line x1={geo.x(hover)} x2={geo.x(hover)} y1={0} y2={H} stroke={colors.textMute} strokeDasharray="3 4" />
-                  <Circle cx={geo.x(hover)} cy={geo.y(geo.closes[hover])} r={5} fill={tone} stroke={colors.bg} strokeWidth={2} />
+                  <Circle cx={geo.x(hover)} cy={geo.y(geo.closes[hover])} r={6} fill={colors.accent} stroke={colors.ink} strokeWidth={1.5} />
                 </>
               ) : (
-                <Circle cx={geo.x(geo.closes.length - 1)} cy={geo.y(geo.closes.at(-1)!)} r={4} fill={tone} />
+                <Circle cx={geo.x(geo.closes.length - 1)} cy={geo.y(geo.closes.at(-1)!)} r={5} fill={colors.accent} stroke={colors.ink} strokeWidth={1.5} />
               )}
             </Svg>
             <View style={StyleSheet.absoluteFill} {...touch} />
           </>
         ) : (
-          <ActivityIndicator color={colors.cyan} style={{ marginTop: H / 2 - 12 }} />
+          <ActivityIndicator color={colors.textDim} style={{ marginTop: H / 2 - 12 }} />
         )}
       </View>
 
-      <Row style={{ justifyContent: 'space-between', marginTop: space(3) }}>
-        <Row gap={6}>
-          {RANGES.map((r) => (
-            <Pressable key={r.label} onPress={() => setRange(r)} style={[st.range, r.label === range.label && st.rangeOn]}>
-              <T v="small" color={r.label === range.label ? colors.text : colors.textDim} style={{ fontFamily: 'Inter_600SemiBold' }}>
-                {r.label}
-              </T>
-            </Pressable>
-          ))}
-        </Row>
-        <T v="small" color={colors.textMute}>
-          Execution by Definitive Flash
-        </T>
-      </Row>
-    </LinearGradient>
+      <View style={[st.seg, { marginTop: space(4), alignSelf: 'stretch' }]}>
+        {RANGES.map((r) => (
+          <Pressable key={r.label} onPress={() => setRange(r)} style={[st.segItem, { flex: 1, justifyContent: 'center' }, r.label === range.label && st.segOn]}>
+            <T v="small" color={r.label === range.label ? colors.text : colors.textDim} style={{ fontFamily: fonts.bodyMed }}>
+              {r.label}
+            </T>
+          </Pressable>
+        ))}
+      </View>
+    </View>
   );
 }
 
 const st = StyleSheet.create({
-  card: { borderRadius: radius.lg, padding: space(5), borderWidth: 1, borderColor: '#2E2A5C' },
-  tab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  tabOn: { backgroundColor: '#FFFFFF10', borderColor: '#FFFFFF22' },
+  card: { borderRadius: radius.xl, padding: space(5), borderWidth: 1.25, borderColor: colors.ink, backgroundColor: colors.card },
+  seg: { flexDirection: 'row', padding: 3, gap: 2, borderRadius: radius.sm, backgroundColor: colors.cardHi },
+  segItem: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.sm - 3 },
+  segOn: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
   dot: { width: 7, height: 7, borderRadius: 4 },
-  range: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.sm },
-  rangeOn: { backgroundColor: '#FFFFFF14' },
 });

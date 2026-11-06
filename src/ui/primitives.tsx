@@ -1,5 +1,4 @@
 import * as Haptics from 'expo-haptics';
-import { LinearGradient } from 'expo-linear-gradient';
 import { ArrowLeft } from 'lucide-react-native';
 import type { ReactNode } from 'react';
 import {
@@ -15,7 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { T } from './Text';
-import { colors, gradients, radius, space } from './theme';
+import { colors, fonts, radius, space } from './theme';
 
 export function Screen({
   children,
@@ -33,16 +32,13 @@ export function Screen({
   const pad = padded ? { paddingHorizontal: space(5) } : null;
   return (
     <SafeAreaView edges={['top']} style={s.screen}>
-      <LinearGradient colors={gradients.hero} style={s.glow} pointerEvents="none" />
       {scroll ? (
         <ScrollView
-          contentContainerStyle={[pad, { paddingBottom: space(28), paddingTop: space(2) }]}
+          contentContainerStyle={[pad, { paddingBottom: space(32), paddingTop: space(2) }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           refreshControl={
-            onRefresh ? (
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textDim} />
-            ) : undefined
+            onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textDim} /> : undefined
           }>
           {children}
         </ScrollView>
@@ -53,11 +49,22 @@ export function Screen({
   );
 }
 
+/** White card on paper with a hairline. `glow` draws the ink outline used for the one featured card. */
 export function Card({ children, style, glow }: { children: ReactNode; style?: StyleProp<ViewStyle>; glow?: boolean }) {
+  return <View style={[s.card, glow && s.cardFeatured, style]}>{children}</View>;
+}
+
+/** Ticket card: black header strip with a label, white body (the signature card). */
+export function Ticket({ label, right, children, style }: { label: string; right?: ReactNode; children: ReactNode; style?: StyleProp<ViewStyle> }) {
   return (
-    <View style={[s.card, glow && s.cardGlow, style]}>
-      <LinearGradient colors={gradients.card} style={StyleSheet.absoluteFill} />
-      {children}
+    <View style={[s.ticket, style]}>
+      <Row style={s.ticketHead}>
+        <T v="small" color={colors.onInk} style={{ fontFamily: fonts.bodyMed, flex: 1 }}>
+          {label}
+        </T>
+        {right}
+      </Row>
+      <View style={s.ticketBody}>{children}</View>
     </View>
   );
 }
@@ -65,7 +72,7 @@ export function Card({ children, style, glow }: { children: ReactNode; style?: S
 type ButtonProps = {
   title: string;
   onPress?: () => void;
-  variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
+  variant?: 'primary' | 'accent' | 'secondary' | 'ghost' | 'danger';
   loading?: boolean;
   disabled?: boolean;
   icon?: ReactNode;
@@ -73,53 +80,57 @@ type ButtonProps = {
   size?: 'md' | 'lg';
 };
 
+const BTN: Record<NonNullable<ButtonProps['variant']>, { bg: string; fg: string; border?: string }> = {
+  primary: { bg: colors.ink, fg: colors.onInk },
+  accent: { bg: colors.accent, fg: colors.ink, border: colors.ink },
+  secondary: { bg: colors.card, fg: colors.text, border: colors.borderHi },
+  ghost: { bg: 'transparent', fg: colors.text },
+  danger: { bg: colors.lossSoft, fg: colors.loss, border: '#F0C9CB' },
+};
+
 export function Button({ title, onPress, variant = 'primary', loading, disabled, icon, style, size = 'lg' }: ButtonProps) {
   const off = disabled || loading;
-  const h = size === 'lg' ? 56 : 44;
-  const content = (
-    <View style={[s.btnInner, { height: h }]}>
-      {loading ? (
-        <ActivityIndicator color={variant === 'primary' ? '#fff' : colors.text} />
-      ) : (
-        <>
-          {icon}
-          <T v="h3" color={variant === 'danger' ? colors.loss : '#fff'} style={{ fontSize: size === 'lg' ? 17 : 15 }}>
-            {title}
-          </T>
-        </>
-      )}
-    </View>
-  );
+  const c = BTN[variant];
   return (
     <Pressable
       disabled={off}
+      accessibilityRole="button"
       onPress={() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
         onPress?.();
       }}
       style={({ pressed }) => [
         s.btn,
-        variant === 'secondary' && s.btnSecondary,
-        variant === 'ghost' && s.btnGhost,
-        variant === 'danger' && s.btnDanger,
-        { opacity: off ? 0.5 : pressed ? 0.85 : 1, transform: [{ scale: pressed ? 0.985 : 1 }] },
+        {
+          height: size === 'lg' ? 52 : 40,
+          backgroundColor: c.bg,
+          borderWidth: c.border ? 1.25 : 0,
+          borderColor: c.border,
+          opacity: off ? 0.45 : 1,
+          transform: [{ scale: pressed ? 0.97 : 1 }],
+        },
         style,
       ]}>
-      {variant === 'primary' ? (
-        <LinearGradient colors={gradients.primary} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.btnGradient}>
-          {content}
-        </LinearGradient>
+      {loading ? (
+        <ActivityIndicator color={c.fg} />
       ) : (
-        content
+        <>
+          {icon}
+          <T v="h3" color={c.fg} style={{ fontSize: size === 'lg' ? 16 : 14 }}>
+            {title}
+          </T>
+        </>
       )}
     </Pressable>
   );
 }
 
+/** Small status tag (radius 6, soft fill). */
 export function Pill({ label, color, bg }: { label: string; color: string; bg?: string }) {
   return (
-    <View style={[s.pill, { backgroundColor: bg ?? `${color}1F`, borderColor: `${color}55` }]}>
-      <T v="label" color={color} style={{ letterSpacing: 0.6 }}>
+    <View style={[s.pill, { backgroundColor: bg ?? colors.cardHi }]}>
+      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color }} />
+      <T v="small" color={colors.text} style={{ fontFamily: fonts.bodyMed, fontSize: 12 }}>
         {label}
       </T>
     </View>
@@ -127,27 +138,48 @@ export function Pill({ label, color, bg }: { label: string; color: string; bg?: 
 }
 
 export function Chip({ label, tone = 'neutral' }: { label: string; tone?: 'neutral' | 'profit' | 'loss' | 'primary' }) {
-  const c = tone === 'profit' ? colors.profit : tone === 'loss' ? colors.loss : tone === 'primary' ? colors.primary : colors.textDim;
+  const fg = tone === 'profit' ? colors.profit : tone === 'loss' ? colors.loss : colors.text;
+  const bg = tone === 'profit' ? colors.profitSoft : tone === 'loss' ? colors.lossSoft : colors.cardHi;
   return (
-    <View style={[s.chip, { borderColor: `${c}40`, backgroundColor: `${c}14` }]}>
-      <T v="small" color={c} style={{ fontFamily: 'Inter_600SemiBold' }}>
+    <View style={[s.chip, { backgroundColor: bg }]}>
+      <T v="mono" color={fg} style={{ fontFamily: fonts.monoMed }}>
         {label}
       </T>
     </View>
   );
 }
 
-export function Avatar({ emoji, size = 44 }: { emoji?: string; size?: number }) {
+// Monogram avatars (no emoji). The stored avatar value picks the tone; older emoji values map to one.
+export const AVATAR_TONES = ['lime', 'ink', 'sand', 'sky', 'rose', 'mint'] as const;
+const TONE: Record<(typeof AVATAR_TONES)[number], { bg: string; fg: string }> = {
+  lime: { bg: colors.accent, fg: colors.ink },
+  ink: { bg: colors.ink, fg: colors.onInk },
+  sand: { bg: '#E8DEC8', fg: colors.ink },
+  sky: { bg: '#D3E3F3', fg: colors.ink },
+  rose: { bg: '#F3D8DC', fg: colors.ink },
+  mint: { bg: '#D3EEDF', fg: colors.ink },
+};
+export const toneOf = (key?: string) => {
+  if (key && key in TONE) return TONE[key as keyof typeof TONE];
+  let h = 0;
+  for (const ch of key ?? '') h = (h * 31 + (ch.codePointAt(0) ?? 0)) >>> 0;
+  return TONE[AVATAR_TONES[h % AVATAR_TONES.length]];
+};
+
+export function Avatar({ name, tone, size = 44 }: { name?: string | null; tone?: string; size?: number }) {
+  const t = toneOf(tone);
+  const initials = (name ?? '?')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? '')
+    .join('');
   return (
-    <LinearGradient
-      colors={gradients.primary}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={{ width: size, height: size, borderRadius: size / 2, padding: 2 }}>
-      <View style={[s.avatarInner, { borderRadius: size / 2 }]}>
-        <T style={{ fontSize: size * 0.5, lineHeight: size * 0.62 }}>{emoji ?? '🦊'}</T>
-      </View>
-    </LinearGradient>
+    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: t.bg, alignItems: 'center', justifyContent: 'center' }}>
+      <T v="h3" color={t.fg} style={{ fontSize: size * 0.38, lineHeight: size * 0.5 }}>
+        {initials || '?'}
+      </T>
+    </View>
   );
 }
 
@@ -158,45 +190,41 @@ export function Row({ children, style, gap = 8 }: { children: ReactNode; style?:
 /** Back arrow + optional title and step dots, for pushed screens. */
 export function Header({ title, onBack, step }: { title?: string; onBack: () => void; step?: { at: number; of: number } }) {
   return (
-    <Row style={{ justifyContent: 'space-between', marginTop: space(2), marginBottom: space(5), minHeight: 44 }}>
-      <Pressable hitSlop={12} onPress={onBack} style={s.backBtn}>
-        <ArrowLeft size={20} color={colors.text} />
+    <Row style={{ marginTop: space(2), marginBottom: space(5), minHeight: 44 }} gap={12}>
+      <Pressable hitSlop={12} onPress={onBack} style={s.backBtn} accessibilityLabel="Back">
+        <ArrowLeft size={20} strokeWidth={1.75} color={colors.text} />
       </Pressable>
-      {title ? (
-        <T v="h3" style={{ flex: 1, textAlign: 'center' }}>
-          {title}
-        </T>
-      ) : (
-        <View style={{ flex: 1 }} />
-      )}
-      <Row gap={6} style={{ width: 40, justifyContent: 'flex-end' }}>
-        {step
-          ? Array.from({ length: step.of }, (_, i) => (
-              <View
-                key={i}
-                style={{
-                  width: i === step.at ? 14 : 6,
-                  height: 6,
-                  borderRadius: 3,
-                  backgroundColor: i <= step.at ? colors.cyan : colors.borderHi,
-                }}
-              />
-            ))
-          : null}
-      </Row>
+      <T v="h2" style={{ flex: 1 }}>
+        {title ?? ''}
+      </T>
+      {step ? (
+        <Row gap={6}>
+          {Array.from({ length: step.of }, (_, i) => (
+            <View
+              key={i}
+              style={{
+                width: i === step.at ? 16 : 6,
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: i <= step.at ? colors.ink : colors.borderHi,
+              }}
+            />
+          ))}
+        </Row>
+      ) : null}
     </Row>
   );
 }
 
 export function Divider() {
-  return <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginVertical: space(3) }} />;
+  return <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.borderHi, marginVertical: space(3) }} />;
 }
 
 export function KV({ k, v, color }: { k: string; v: string; color?: string }) {
   return (
-    <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
+    <Row style={{ justifyContent: 'space-between', minHeight: 32 }}>
       <T v="small">{k}</T>
-      <T v="num" color={color} style={{ fontSize: 15 }}>
+      <T v="num" color={color} style={{ fontSize: 14 }}>
         {v}
       </T>
     </Row>
@@ -205,29 +233,40 @@ export function KV({ k, v, color }: { k: string; v: string; color?: string }) {
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 320 },
   card: {
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: space(4),
-    overflow: 'hidden',
+    backgroundColor: colors.card,
+    padding: space(5),
   },
-  cardGlow: { borderColor: '#3A3270' },
-  btn: { borderRadius: radius.md, overflow: 'hidden' },
-  btnGradient: { borderRadius: radius.md },
-  btnInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: space(5) },
-  btnSecondary: { backgroundColor: colors.cardHi, borderWidth: 1, borderColor: colors.borderHi },
-  btnGhost: { backgroundColor: 'transparent' },
-  btnDanger: { backgroundColor: '#FF5C7A14', borderWidth: 1, borderColor: '#FF5C7A55' },
-  pill: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, alignSelf: 'flex-start' },
-  chip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.sm, borderWidth: 1 },
-  avatarInner: { flex: 1, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },
+  cardFeatured: { borderColor: colors.ink, borderWidth: 1.25 },
+  ticket: { borderRadius: radius.md, borderWidth: 1.25, borderColor: colors.ink, backgroundColor: colors.card, overflow: 'hidden' },
+  ticketHead: { backgroundColor: colors.ink, paddingHorizontal: space(3), paddingVertical: space(2) },
+  ticketBody: { padding: space(3) },
+  btn: {
+    borderRadius: radius.pill,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: space(6),
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  chip: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   backBtn: {
     width: 40,
     height: 40,
-    borderRadius: 12,
-    backgroundColor: colors.cardHi,
+    borderRadius: radius.sm,
+    backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: 'center',

@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import { ExternalLink } from 'lucide-react-native';
 import { useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Pressable, View } from 'react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 
 import { ModeBadge } from '@/components/ModeBadge';
@@ -12,7 +12,7 @@ import { NETWORKS, txUrl } from '@/lib/constants';
 import { cancelMessageFor } from '@/lib/flashMessages';
 import { signedUsd, timeAgo, usd } from '@/lib/pricing';
 import type { Application, PositionStatus } from '@/lib/types';
-import { Button, Card, Divider, Row, Screen } from '@/ui/primitives';
+import { Button, Card, Divider, Row, Screen, Ticket } from '@/ui/primitives';
 import { T } from '@/ui/Text';
 import { colors, space } from '@/ui/theme';
 import { useWallet } from '@/wallet/WalletProvider';
@@ -104,10 +104,10 @@ function PositionCard({ p, onCancel }: { p: Application; onCancel: (p: Applicati
           {p.txs.map((tx) => (
             <Pressable key={tx.hash + tx.label} onPress={() => Linking.openURL(txUrl(tx.hash, p.chain))}>
               <Row gap={4}>
-                <T v="small" color={colors.cyan}>
+                <T v="mono" color={colors.text}>
                   {tx.label}
                 </T>
-                <ExternalLink size={12} color={colors.cyan} />
+                <ExternalLink size={12} strokeWidth={1.75} color={colors.text} />
               </Row>
             </Pressable>
           ))}
@@ -125,6 +125,8 @@ function PositionCard({ p, onCancel }: { p: Application; onCancel: (p: Applicati
             setBusy(true);
             try {
               await onCancel(p);
+            } catch (e) {
+              Alert.alert('Order not cancelled', e instanceof Error ? e.message : String(e));
             } finally {
               setBusy(false);
             }
@@ -163,22 +165,20 @@ export default function Positions() {
         <ModeBadge />
       </Row>
 
-      <Row gap={10}>
-        <Card style={{ flex: 1 }}>
-          <T v="label">Open</T>
-          <T v="numLg" style={{ marginTop: 4 }}>
-            {open}
-          </T>
-        </Card>
-        <Card style={{ flex: 1 }}>
-          <T v="label">Realized</T>
-          <T v="numLg" color={realized >= 0 ? colors.profit : colors.loss} style={{ marginTop: 4 }}>
+      <Row gap={12}>
+        <Ticket label="Open" style={{ flex: 1 }}>
+          <T v="numLg">{open}</T>
+          <T v="mono">{positions.length} total</T>
+        </Ticket>
+        <Ticket label="Realized P&L" style={{ flex: 1.3 }}>
+          <T v="numLg" color={realized >= 0 ? colors.profit : colors.loss}>
             {signedUsd(realized)}
           </T>
-        </Card>
+          <T v="mono">closed trades</T>
+        </Ticket>
       </Row>
 
-      {loading && !data ? <ActivityIndicator color={colors.cyan} style={{ marginTop: space(10) }} /> : null}
+      {loading && !data ? <ActivityIndicator color={colors.textDim} style={{ marginTop: space(10) }} /> : null}
       {error && !data ? (
         <T v="small" color={colors.loss} style={{ marginTop: space(4) }}>
           {error}

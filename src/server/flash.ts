@@ -22,34 +22,89 @@ export class FlashError extends Error {
 
 type FlashInit = { method?: 'GET' | 'POST'; body?: unknown; query?: Record<string, string> };
 
+// ---- Rate limiting (Flash docs, Rate Limits: 5 requests/second per endpoint per API key) ----
+// Every call waits for a slot in its endpoint's 1-second window (4 per second, leaving headroom for other
+// processes sharing the key). A 429 is retried after RateLimit-Reset with exponential backoff and jitter:
+// Flash rejects a rate-limited request before processing it, so a retry cannot double-submit.
+const PER_SECOND = 4;
+const MAX_RETRIES = 4;
+const windows = new Map<string, number[]>();
+
+/** Endpoint bucket: /quote, /order, /search, /setup-transaction, get order, cancel. */
+const bucketOf = (method: string, path: string) =>
+  /^\/orders\/[^/]+\/cancel/.test(path) ? 'cancel' : /^\/orders\/[^/]+$/.test(path) ? `${method} order` : path;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function takeSlot(bucket: string) {
+  for (;;) {
+    const now = Date.now();
+    const recent = (windows.get(bucket) ?? []).filter((t) => now - t < 1000);
+    if (recent.length < PER_SECOND) {
+      recent.push(now);
+      windows.set(bucket, recent);
+      return;
+    }
+    windows.set(bucket, recent);
+    await sleep(1000 - (now - recent[0]) + 5);
+  }
+}
+
+// Identical GETs in flight at the same moment share one request (several screens polling one order).
+const inflight = new Map<string, Promise<unknown>>();
+
 export async function flash<T = any>(path: string, init: FlashInit = {}): Promise<T> {
+  const method = init.method ?? (init.body ? 'POST' : 'GET');
   const url = new URL(BASE_URL + path);
   for (const [k, v] of Object.entries(init.query ?? {})) url.searchParams.set(k, v);
-  const res = await fetch(url, {
-    method: init.method ?? (init.body ? 'POST' : 'GET'),
-    headers: {
-      'content-type': 'application/json',
-      'x-definitive-api-key': flashKey(),
-    },
-    body: init.body ? JSON.stringify(init.body) : undefined,
-  });
-  const text = await res.text();
-  let json: any = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    // non-JSON error body
+  if (method === 'GET') {
+    const key = url.toString();
+    const shared = inflight.get(key);
+    if (shared) return shared as Promise<T>;
+    const p = send<T>(method, path, url, init).finally(() => inflight.delete(key));
+    inflight.set(key, p);
+    return p;
   }
-  if (!res.ok) {
-    const err = json?.error;
-    throw new FlashError(
-      res.status,
-      err?.code ?? `HTTP_${res.status}`,
-      err?.message ?? (text.slice(0, 200) || res.statusText),
-      err?.details,
-    );
+  return send<T>(method, path, url, init);
+}
+
+async function send<T>(method: string, path: string, url: URL, init: FlashInit): Promise<T> {
+  const bucket = bucketOf(method, path);
+  for (let attempt = 0; ; attempt++) {
+    await takeSlot(bucket);
+    const res = await fetch(url, {
+      method,
+      headers: {
+        'content-type': 'application/json',
+        'x-definitive-api-key': flashKey(),
+      },
+      body: init.body ? JSON.stringify(init.body) : undefined,
+    });
+    const text = await res.text();
+    let json: any = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      // non-JSON error body
+    }
+    if (res.status === 429 && attempt < MAX_RETRIES) {
+      const reset = Number(res.headers.get('ratelimit-reset')) || 1;
+      await sleep(reset * 1000 * 2 ** attempt + Math.random() * 250);
+      continue;
+    }
+    if (!res.ok) {
+      const err = json?.error;
+      throw new FlashError(
+        res.status,
+        err?.code ?? `HTTP_${res.status}`,
+        res.status === 429
+          ? 'Definitive Flash is busy right now (rate limited). Try again in a few seconds.'
+          : err?.message ?? (text.slice(0, 200) || res.statusText),
+        err?.details,
+      );
+    }
+    return json as T;
   }
-  return json as T;
 }
 
 // ---- Typed shapes we rely on (subset of the OpenAPI schema) ----

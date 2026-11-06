@@ -1,6 +1,7 @@
 import { MAX_CUT_PCT, type PlaybookNetwork } from '@/lib/constants';
 import { db, HOUSE } from '@/server/db';
 import { fail, isAddress, ok } from '@/server/http';
+import { assertOwner } from '@/server/ownership';
 import { withMeta, withMetaOne } from '@/server/meta';
 
 export async function GET() {
@@ -33,6 +34,7 @@ export async function POST(request: Request) {
     if (!isAddress(b.creator)) throw new Error('Connect a wallet first');
     if (b.creator.toLowerCase() === HOUSE) throw new Error('That address is reserved');
     if (!(await db.getTrader(b.creator))) throw new Error('Create your trader profile first');
+    await assertOwner('Publish playbook', b.creator, b.proof);
     const name = String(b.name ?? '').trim().slice(0, 32);
     if (name.length < 3) throw new Error('Name your playbook (3+ characters)');
     const template = await db.createTemplate({

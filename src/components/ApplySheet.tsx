@@ -2,7 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { Check, CircleDashed, X } from 'lucide-react-native';
 import { useEffect } from 'react';
 import { ActivityIndicator, Modal, StyleSheet, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, ZoomIn } from 'react-native-reanimated';
+import Animated, { Easing, FadeIn, FadeInDown, ZoomIn } from 'react-native-reanimated';
 
 import { ALL_STEP_KEYS, stepsFor, type StepKey, type StepState } from '@/lib/applyFlow';
 import { NETWORKS, type Chain } from '@/lib/constants';
@@ -10,7 +10,7 @@ import { usd } from '@/lib/pricing';
 import type { Application } from '@/lib/types';
 import { Button, Row } from '@/ui/primitives';
 import { T } from '@/ui/Text';
-import { colors, radius, space } from '@/ui/theme';
+import { colors, DUR, EASE, radius, space } from '@/ui/theme';
 
 export type StepView = Record<StepKey, { state: StepState; detail?: string }>;
 
@@ -62,10 +62,10 @@ export function ApplySheet({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={busy ? undefined : onClose}>
       <View style={st.overlay}>
-        <Animated.View entering={FadeInDown.springify().damping(18)} style={st.sheet}>
+        <Animated.View entering={FadeInDown.duration(DUR.enter).easing(Easing.bezier(...EASE))} style={st.sheet}>
           {result ? (
             <Animated.View entering={FadeIn} style={{ alignItems: 'center', gap: space(3) }}>
-              <Animated.View entering={ZoomIn.springify()} style={st.bigCheck}>
+              <Animated.View entering={ZoomIn.duration(DUR.enter).easing(Easing.bezier(...EASE))} style={st.bigCheck}>
                 <Check size={38} color={colors.bg} strokeWidth={3} />
               </Animated.View>
               <T v="h1" style={{ textAlign: 'center' }}>
@@ -146,8 +146,8 @@ const st = StyleSheet.create({
     marginTop: space(3),
     padding: space(3),
     borderRadius: radius.md,
-    backgroundColor: '#FF5C7A12',
+    backgroundColor: colors.lossSoft,
     borderWidth: 1,
-    borderColor: '#FF5C7A44',
+    borderColor: '#F0C9CB',
   },
 });

@@ -2,28 +2,29 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { Easing, FadeInDown } from 'react-native-reanimated';
 
 import { ApplySheet, freshSteps, type StepView } from '@/components/ApplySheet';
+import { TradeChart } from '@/components/charts/TradeChart';
 import { ModeBadge } from '@/components/ModeBadge';
 import { NetworkSwitch } from '@/components/NetworkSwitch';
-import { TradeChart } from '@/components/charts/TradeChart';
-import { RuleChips, StatusPill } from '@/components/Playbook';
+import { NetworkTag, RuleChips, StatusPill } from '@/components/Playbook';
 import { useCandles } from '@/hooks/useCandles';
 import { useFetch } from '@/hooks/useFetch';
 import { usePrice } from '@/hooks/usePrice';
 import { api, type Timeframe } from '@/lib/api';
-import { fmtPrice } from '@/lib/chartMath';
 import { runApply } from '@/lib/applyFlow';
+import { fmtPrice } from '@/lib/chartMath';
 import { CHAINS, NETWORKS, playbookChains, type Chain } from '@/lib/constants';
 import { buildPlan, shortAddr, signedUsd, timeAgo, usd } from '@/lib/pricing';
 import type { Application } from '@/lib/types';
-import { Avatar, Button, Card, Divider, KV, Row, Screen } from '@/ui/primitives';
+import { Avatar, Button, Card, Header, KV, Row, Screen } from '@/ui/primitives';
 import { T } from '@/ui/Text';
-import { colors, fonts, radius, space } from '@/ui/theme';
+import { colors, DUR, EASE, fonts, radius, space } from '@/ui/theme';
 import { useWallet } from '@/wallet/WalletProvider';
 
 const AMOUNTS = [1, 5, 10, 25];
+const rise = (i: number) => FadeInDown.delay(i * 50).duration(DUR.enter).easing(Easing.bezier(...EASE));
 
 export default function TemplateScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -79,16 +80,15 @@ export default function TemplateScreen() {
   if (loading && !t) {
     return (
       <Screen scroll={false}>
-        <ActivityIndicator color={colors.cyan} style={{ marginTop: 120 }} />
+        <ActivityIndicator color={colors.textDim} style={{ marginTop: 120 }} />
       </Screen>
     );
   }
   if (!t) {
     return (
       <Screen>
-        <T v="h2" style={{ marginTop: 60 }}>
-          Playbook not found
-        </T>
+        <Header title="Playbook" onBack={() => router.back()} />
+        <T v="body">This playbook no longer exists.</T>
       </Screen>
     );
   }
@@ -97,68 +97,73 @@ export default function TemplateScreen() {
   return (
     <Screen>
       <Row style={{ justifyContent: 'space-between', marginTop: space(2), marginBottom: space(4) }}>
-        <Pressable onPress={() => router.back()} hitSlop={12} style={st.back}>
-          <ChevronLeft size={22} color={colors.text} />
+        <Pressable onPress={() => router.back()} hitSlop={12} style={st.back} accessibilityLabel="Back">
+          <ChevronLeft size={22} strokeWidth={1.75} color={colors.text} />
         </Pressable>
         <ModeBadge />
       </Row>
 
-      <Animated.View entering={FadeInDown.duration(400)} style={{ gap: space(3) }}>
+      <Animated.View entering={rise(0)} style={{ gap: space(3) }}>
         <Row gap={12}>
-          <Avatar emoji={t.trader?.avatar} size={52} />
+          <Avatar name={t.trader?.name} tone={t.trader?.avatar} size={48} />
           <View style={{ flex: 1 }}>
             <T v="h1">{t.name}</T>
-            <T v="small">
-              by {t.trader?.name ?? 'Unknown'} · @{t.trader?.handle ?? 'anon'}
-            </T>
+            <T v="small">by {t.trader?.name ?? 'Unknown'}</T>
           </View>
         </Row>
-        <T v="body">{t.description}</T>
+        {t.description ? <T v="body">{t.description}</T> : null}
         <RuleChips t={t} />
+        <View style={st.stats}>
+          {[
+            { k: 'Applied', v: String(t.stats.applies) },
+            { k: 'Win rate', v: closed ? `${Math.round((100 * t.stats.wins) / closed)}%` : '—' },
+            { k: 'Creator cut', v: `${t.cutPct}%` },
+          ].map((x, i) => (
+            <View key={x.k} style={[st.stat, i > 0 && st.statLine]}>
+              <T v="mono">{x.k}</T>
+              <T v="num" style={{ marginTop: 2 }}>
+                {x.v}
+              </T>
+            </View>
+          ))}
+        </View>
       </Animated.View>
 
-      <Row gap={10} style={{ marginTop: space(5) }}>
-        {[
-          { k: 'Applied', v: String(t.stats.applies) },
-          { k: 'Win rate', v: closed ? `${Math.round((100 * t.stats.wins) / closed)}%` : '—' },
-          { k: 'Creator cut', v: `${t.cutPct}%` },
-        ].map((x) => (
-          <Card key={x.k} style={{ flex: 1, paddingVertical: space(3) }}>
-            <T v="label">{x.k}</T>
-            <T v="h2" style={{ marginTop: 4 }}>
-              {x.v}
+      <Animated.View entering={rise(1)} style={{ marginTop: space(5), gap: space(2) }}>
+        {offered.length > 1 ? (
+          <NetworkSwitch
+            value={chain}
+            onChange={setPicked}
+            disabled={CHAINS.filter((c) => !offered.includes(c) || (c === 'solana' && !w.solAddress))}
+          />
+        ) : (
+          <Row gap={8}>
+            <NetworkTag chain={t.chain} />
+            <T v="small">
+              Trades {net.asset} on {net.name}
             </T>
-          </Card>
-        ))}
-      </Row>
-
-      <Animated.View entering={FadeInDown.delay(60).duration(400)} style={{ marginTop: space(5), gap: space(2) }}>
-        <T v="label">Trade on</T>
-        <NetworkSwitch
-          value={chain}
-          onChange={setPicked}
-          disabled={CHAINS.filter((c) => !offered.includes(c) || (c === 'solana' && !w.solAddress))}
-        />
-        {offered.length === 1 ? (
-          <T v="small">The creator set this playbook to {net.name} only.</T>
-        ) : null}
+          </Row>
+        )}
         {!w.solAddress && offered.includes('solana') ? (
           <T v="small">Solana needs a wallet created or imported with a recovery phrase.</T>
         ) : null}
       </Animated.View>
 
-      <Animated.View entering={FadeInDown.delay(100).duration(400)}>
-        <Card style={{ marginTop: space(4) }} glow>
+      <Animated.View entering={rise(2)}>
+        <Card style={{ marginTop: space(4), padding: space(4) }} glow>
           <Row style={{ justifyContent: 'space-between', marginBottom: space(3) }}>
-            <T v="label">If you apply now · {net.asset}</T>
-            <T v="small">{plan ? (plan.orderType === 'market' ? 'Market buy' : 'Limit buy') : ''}</T>
+            <View>
+              <T v="small">If you apply now</T>
+              <T v="numLg">{price ? usd(price.price) : '—'}</T>
+            </View>
+            <T v="mono">{plan ? (plan.orderType === 'market' ? 'Market buy' : 'Limit buy') : ''}</T>
           </Row>
           <TradeChart
             candles={candles}
             tf={tf}
             onTf={setTf}
             now={price?.price ?? null}
-            height={280}
+            height={260}
             levels={
               plan
                 ? [
@@ -167,7 +172,7 @@ export default function TemplateScreen() {
                       key: 'entry',
                       price: plan.entryPrice,
                       label: plan.orderType === 'market' ? 'Buy now' : `Buy ${fmtPrice(plan.entryPrice)}`,
-                      color: colors.primary,
+                      color: colors.ink,
                     },
                     { key: 'sl', price: plan.stopLossPrice, label: `SL ${fmtPrice(plan.stopLossPrice)}`, color: colors.loss },
                   ]
@@ -177,9 +182,9 @@ export default function TemplateScreen() {
         </Card>
       </Animated.View>
 
-      <Animated.View entering={FadeInDown.delay(180).duration(400)}>
+      <Animated.View entering={rise(3)}>
         <Card style={{ marginTop: space(4) }}>
-          <T v="label">Amount</T>
+          <T v="small">Amount, USDC on {net.name}</T>
           <Row style={st.amountRow}>
             <T v="numLg" color={colors.textMute}>
               $
@@ -189,46 +194,38 @@ export default function TemplateScreen() {
               onChangeText={(v) => setAmount(v.replace(/[^0-9.]/g, ''))}
               inputMode="decimal"
               style={st.amountInput}
-              selectionColor={colors.cyan}
+              selectionColor={colors.ink}
+              accessibilityLabel="Amount in USDC"
             />
-            <T v="small">USDC on {net.name}</T>
           </Row>
           <Row gap={8}>
             {AMOUNTS.map((a) => (
               <Pressable
                 key={a}
                 onPress={() => setAmount(String(a))}
-                style={[st.amountChip, Number(amount) === a && st.amountChipOn]}>
-                <T v="bodyMed" color={Number(amount) === a ? colors.text : colors.textDim}>
+                style={({ pressed }) => [st.amountChip, Number(amount) === a && st.amountChipOn, { transform: [{ scale: pressed ? 0.97 : 1 }] }]}>
+                <T v="bodyMed" color={colors.text}>
                   ${a}
                 </T>
               </Pressable>
             ))}
           </Row>
           {plan && amountUsd > 0 ? (
-            <>
-              <Divider />
+            <View style={{ marginTop: space(3) }}>
               <KV k="You get about" v={`${plan.estEth.toFixed(chain === 'solana' ? 4 : 5)} ${net.asset}`} />
               <KV k={`At take profit ${usd(plan.takeProfitPrice)}`} v={signedUsd(plan.profitAtTpUsd)} color={colors.profit} />
-              <KV k={`At stop-loss ${usd(plan.stopLossPrice)}`} v={signedUsd(plan.lossAtSlUsd)} color={colors.loss} />
-              <KV k={`Creator cut (${t.cutPct}%)`} v={usd(plan.creatorFeeUsd)} color={colors.cyan} />
+              <KV k={`At stop ${usd(plan.stopLossPrice)}`} v={signedUsd(plan.lossAtSlUsd)} color={colors.loss} />
+              <KV k={`Creator cut, ${t.cutPct}%`} v={usd(plan.creatorFeeUsd)} />
               <KV k="Definitive fee" v={plan.definitiveFeeUsd ? usd(plan.definitiveFeeUsd) : 'Included'} />
-            </>
+            </View>
           ) : (
             <T v="small" style={{ marginTop: space(3) }}>
-              Enter an amount.
+              Enter an amount
             </T>
           )}
-          <Button
-            title="Apply playbook"
-            onPress={apply}
-            disabled={!plan || amountUsd <= 0}
-            style={{ marginTop: space(4) }}
-          />
-          <T v="small" style={{ textAlign: 'center', marginTop: space(2) }}>
-            {chain === 'solana'
-              ? 'Two free signatures, plus a one-time setup on Solana. Funds stay in your wallet until Flash executes.'
-              : 'Two free signatures. Funds stay in your wallet until Flash executes.'}
+          <Button title="Apply playbook" onPress={apply} disabled={!plan || amountUsd <= 0} style={{ marginTop: space(4) }} />
+          <T v="mono" style={{ textAlign: 'center', marginTop: space(2) }}>
+            {chain === 'solana' ? 'One-time setup, then 2 free signatures' : '2 free signatures, approvals the first time'}
           </T>
         </Card>
       </Animated.View>
@@ -238,11 +235,11 @@ export default function TemplateScreen() {
           <T v="h2" style={{ marginTop: space(8), marginBottom: space(3) }}>
             Recent applies
           </T>
-          <Card style={{ gap: space(1) }}>
-            {data.recent.map((a) => (
-              <Row key={a.id} style={{ justifyContent: 'space-between', paddingVertical: 8 }}>
+          <Card style={{ paddingVertical: space(2) }}>
+            {data.recent.map((a, i) => (
+              <Row key={a.id} style={[{ justifyContent: 'space-between', minHeight: 56 }, i > 0 && st.rowLine]}>
                 <View>
-                  <T v="bodyMed">
+                  <T v="mono" color={colors.text}>
                     {shortAddr(a.funder)} · {usd(a.amountUsd, 0)}
                   </T>
                   <T v="small">
@@ -278,14 +275,17 @@ const st = StyleSheet.create({
   back: {
     width: 40,
     height: 40,
-    borderRadius: 12,
-    backgroundColor: colors.cardHi,
+    borderRadius: radius.sm,
+    backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  amountRow: { marginVertical: space(2), gap: 6 },
+  stats: { flexDirection: 'row', borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.border },
+  stat: { flex: 1, paddingVertical: space(3) },
+  statLine: { borderLeftWidth: 1, borderLeftColor: colors.border, paddingLeft: space(3) },
+  amountRow: { marginTop: space(1), marginBottom: space(3), gap: 6 },
   amountInput: {
     flex: 1,
     color: colors.text,
@@ -296,11 +296,13 @@ const st = StyleSheet.create({
   amountChip: {
     flex: 1,
     alignItems: 'center',
-    paddingVertical: 10,
-    borderRadius: radius.md,
-    backgroundColor: colors.cardHi,
+    height: 40,
+    justifyContent: 'center',
+    borderRadius: radius.pill,
+    backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderHi,
   },
-  amountChipOn: { borderColor: colors.cyan, backgroundColor: '#3DD6FF1A' },
+  amountChipOn: { borderColor: colors.ink, backgroundColor: colors.accent, borderWidth: 1.25 },
+  rowLine: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.borderHi },
 });

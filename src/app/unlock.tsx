@@ -1,14 +1,13 @@
 import { router } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Fingerprint, TriangleAlert } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import Animated, { Easing, FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import { shortAddr } from '@/lib/pricing';
 import { Button, Row, Screen } from '@/ui/primitives';
 import { T } from '@/ui/Text';
-import { colors, gradients, space } from '@/ui/theme';
+import { colors, DUR, EASE, space } from '@/ui/theme';
 import { useWallet } from '@/wallet/WalletProvider';
 
 export default function Unlock() {
@@ -52,23 +51,28 @@ export default function Unlock() {
   return (
     <Screen scroll={false}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: space(4) }}>
-        <Animated.View entering={FadeInDown.duration(450)} style={{ alignItems: 'center', gap: space(3) }}>
-          <LinearGradient colors={gradients.primary} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={st.logo}>
-            <T v="h1" color="#fff">
-              P
-            </T>
-          </LinearGradient>
-          <T v="h1">Welcome back</T>
+        <Animated.View entering={FadeInDown.duration(DUR.enter).easing(Easing.bezier(...EASE))} style={{ alignItems: 'center', gap: space(3) }}>
+          <Row gap={8}>
+            <View style={st.mark} />
+            <T v="h3">playbook</T>
+          </Row>
+          <T v="h1" style={{ marginTop: space(4) }}>
+            Wallet locked
+          </T>
           <View style={st.addr}>
-            <T v="num" color={colors.textDim} style={{ fontSize: 14 }}>
+            <T v="mono" color={colors.text}>
               {shortAddr(w.address)}
             </T>
           </View>
         </Animated.View>
 
-        <Animated.View entering={FadeIn.delay(200)}>
-          <Pressable onPress={tryUnlock} disabled={busy} style={({ pressed }) => [st.fp, pressed && { opacity: 0.8 }]}>
-            <Fingerprint size={44} color={colors.cyan} strokeWidth={1.5} />
+        <Animated.View entering={FadeIn.delay(120).duration(DUR.enter)}>
+          <Pressable
+            onPress={tryUnlock}
+            disabled={busy}
+            accessibilityLabel="Unlock with fingerprint, face or PIN"
+            style={({ pressed }) => [st.fp, { transform: [{ scale: pressed ? 0.96 : 1 }] }]}>
+            <Fingerprint size={44} color={colors.ink} strokeWidth={1.5} />
           </Pressable>
         </Animated.View>
 
@@ -95,7 +99,7 @@ export default function Unlock() {
 }
 
 const st = StyleSheet.create({
-  logo: { width: 64, height: 64, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  mark: { width: 18, height: 18, borderRadius: 5, backgroundColor: colors.ink, borderBottomWidth: 5, borderBottomColor: colors.accent },
   addr: {
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -111,16 +115,16 @@ const st = StyleSheet.create({
     marginTop: space(6),
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#3DD6FF10',
-    borderWidth: 1,
-    borderColor: '#3DD6FF40',
+    backgroundColor: colors.accent,
+    borderWidth: 1.5,
+    borderColor: colors.ink,
   },
   warn: {
     marginTop: space(4),
     padding: space(3),
     borderRadius: 14,
-    backgroundColor: '#FFB54712',
+    backgroundColor: colors.warnSoft,
     borderWidth: 1,
-    borderColor: '#FFB54744',
+    borderColor: '#EAD7B3',
   },
 });

@@ -77,7 +77,7 @@ export default function ImportWallet() {
               importantForAutofill="no"
               keyboardType={Platform.OS === 'android' ? 'visible-password' : 'default'}
               textAlignVertical="top"
-              style={[st.input, status.tone === 'ok' && { borderColor: '#2EE6A688' }, status.tone === 'bad' && { borderColor: '#FF5C7A88' }]}
+              style={[st.input, status.tone === 'ok' && { borderColor: '#A9DCC3' }, status.tone === 'bad' && { borderColor: '#F0C9CB' }]}
             />
             <Pressable
               hitSlop={8}
@@ -157,23 +157,23 @@ const st = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: radius.pill,
-    backgroundColor: '#3DD6FF14',
+    backgroundColor: colors.cardHi,
     borderWidth: 1,
-    borderColor: '#3DD6FF40',
+    borderColor: colors.borderHi,
   },
   note: {
     alignItems: 'flex-start',
     padding: space(3),
     borderRadius: radius.md,
-    backgroundColor: '#FFB54710',
+    backgroundColor: colors.warnSoft,
     borderWidth: 1,
-    borderColor: '#FFB54733',
+    borderColor: '#EAD7B3',
   },
   errorBox: {
     padding: space(3),
     borderRadius: radius.md,
-    backgroundColor: '#FF5C7A12',
+    backgroundColor: colors.lossSoft,
     borderWidth: 1,
-    borderColor: '#FF5C7A44',
+    borderColor: '#F0C9CB',
   },
 });

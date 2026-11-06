@@ -3,7 +3,7 @@ import * as Haptics from 'expo-haptics';
 import { MessageSquareText, PenLine, ShieldCheck, TriangleAlert } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { Easing, FadeInDown } from 'react-native-reanimated';
 import { formatEther, type Address } from 'viem';
 
 import { usePrice } from '@/hooks/usePrice';
@@ -11,7 +11,7 @@ import { publicClient, solBalancesOf } from '@/lib/chain';
 import { shortAddr, usd } from '@/lib/pricing';
 import { Button, Divider, KV, Row } from '@/ui/primitives';
 import { T } from '@/ui/Text';
-import { colors, radius, space } from '@/ui/theme';
+import { colors, DUR, EASE, fonts, radius, space } from '@/ui/theme';
 
 import { describe, isSolanaRequest, solanaTxCost, type SignRequest } from './describe';
 
@@ -71,7 +71,7 @@ function SignBody({
   const noGas = fee && 'enough' in fee && !fee.enough;
 
   return (
-    <Animated.View entering={FadeInDown.springify().damping(18)} style={st.sheet}>
+    <Animated.View entering={FadeInDown.duration(DUR.enter).easing(Easing.bezier(...EASE))} style={st.sheet}>
       <View style={st.handle} />
       <Row gap={12}>
         <View style={st.iconWrap}>
@@ -114,7 +114,7 @@ function SignBody({
           ) : null}
           {req.kind === 'message' ? (
             <ScrollView style={{ maxHeight: 140 }}>
-              <T v="bodyMed" style={{ fontFamily: 'Inter_400Regular' }}>
+              <T v="bodyMed" style={{ fontFamily: fonts.body }}>
                 {req.message}
               </T>
             </ScrollView>
@@ -204,9 +204,9 @@ const st = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 16,
-    backgroundColor: '#3DD6FF14',
+    backgroundColor: colors.cardHi,
     borderWidth: 1,
-    borderColor: '#3DD6FF40',
+    borderColor: colors.borderHi,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -223,8 +223,8 @@ const st = StyleSheet.create({
     marginTop: space(3),
     padding: space(3),
     borderRadius: radius.md,
-    backgroundColor: '#FFB54712',
+    backgroundColor: colors.warnSoft,
     borderWidth: 1,
-    borderColor: '#FFB54744',
+    borderColor: '#EAD7B3',
   },
 });

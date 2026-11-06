@@ -54,6 +54,9 @@ export type SolanaQuote = QuoteCommon & {
 
 export type QuoteResult = BaseQuote | SolanaQuote;
 
+/** Wallet signature proving the caller owns the address (see lib/ownership). */
+export type OwnerProof = { time: string; signature: string };
+
 export type Candle = { t: number; o: number; h: number; l: number; c: number };
 export type Timeframe = '15m' | '1h' | '6h' | '1d';
 
@@ -73,12 +76,13 @@ export const api = {
     stopLossPct: number;
     cutPct: number;
     chain: PlaybookNetwork;
+    proof: OwnerProof;
   }) => req<{ template: TemplateWithMeta }>('/api/templates', { body }),
   trader: (address: string) =>
     req<{ trader: Trader | null; templates: TemplateWithMeta[]; earnings: Earnings; recent: Application[] }>(
       `/api/traders/${address}`,
     ),
-  saveTrader: (body: { address: string; name: string; handle?: string; bio: string; avatar: string }) =>
+  saveTrader: (body: { address: string; name: string; handle?: string; bio: string; avatar: string; proof: OwnerProof }) =>
     req<{ trader: Trader }>('/api/traders', { body }),
   quote: (body: { templateId: string; amountUsd: number; funder: string; chain: Chain }) =>
     req<QuoteResult>('/api/apply/quote', { body }),

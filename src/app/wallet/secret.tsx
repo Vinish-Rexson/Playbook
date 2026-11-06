@@ -96,9 +96,9 @@ const st = StyleSheet.create({
     alignItems: 'flex-start',
     padding: space(3),
     borderRadius: radius.md,
-    backgroundColor: '#FF5C7A10',
+    backgroundColor: colors.lossSoft,
     borderWidth: 1,
-    borderColor: '#FF5C7A40',
+    borderColor: '#F0C9CB',
   },
   keyBox: {
     padding: space(4),

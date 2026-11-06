@@ -1,8 +1,11 @@
+// Create: profile first (once), then a playbook built on the chart. Buy, take profit and stop are three
+// independent levels: moving one (by dragging it on the chart or with + / −) never moves the others.
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
+import { Info, X } from 'lucide-react-native';
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import Animated, { Easing, FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
 
 import { TradeChart, type Level, type LevelKey } from '@/components/charts/TradeChart';
 import { NetworkSwitch } from '@/components/NetworkSwitch';
@@ -11,50 +14,55 @@ import { useCandles } from '@/hooks/useCandles';
 import { useFetch } from '@/hooks/useFetch';
 import { usePrice } from '@/hooks/usePrice';
 import { api, type Timeframe } from '@/lib/api';
-import { clamp, fmtPrice, readChart, round1, RULE_LIMITS, setupsFrom, type Setup } from '@/lib/chartMath';
+import { clamp, fmtPrice, readChart, RULE_LIMITS, setupsFrom, type Setup } from '@/lib/chartMath';
 import { MAX_CUT_PCT, NETWORKS, type Chain } from '@/lib/constants';
-import { buildPlan, pct, signedUsd, usd } from '@/lib/pricing';
-import { Avatar, Button, Card, KV, Row, Screen } from '@/ui/primitives';
+import { proveOwner } from '@/lib/ownership';
+import { buildPlan, pct, round2, signedUsd, usd } from '@/lib/pricing';
+import { Avatar, AVATAR_TONES, Button, Card, Row, Screen, toneOf } from '@/ui/primitives';
 import { T } from '@/ui/Text';
-import { colors, fonts, radius, space } from '@/ui/theme';
+import { colors, DUR, EASE, fonts, radius, space } from '@/ui/theme';
 import { useWallet } from '@/wallet/WalletProvider';
 
-const EMOJIS = ['🦊', '🐋', '🦉', '🐯', '🚀', '🦄', '🐉', '🧠'];
+const L = RULE_LIMITS;
+const rise = FadeInDown.duration(DUR.enter).easing(Easing.bezier(...EASE));
 
 function Field(props: React.ComponentProps<typeof TextInput> & { label: string }) {
   const { label, style, ...rest } = props;
   return (
     <View style={{ gap: 6 }}>
       <T v="label">{label}</T>
-      <TextInput placeholderTextColor={colors.textMute} style={[s.input, style]} selectionColor={colors.cyan} {...rest} />
+      <TextInput placeholderTextColor={colors.textMute} style={[s.input, style]} selectionColor={colors.ink} {...rest} />
     </View>
   );
 }
 
-function ProfileForm({ address, onSaved }: { address: string; onSaved: () => void }) {
+function ProfileForm({ address, sign, onSaved }: { address: string; sign: (m: string) => Promise<string>; onSaved: () => void }) {
   const [name, setName] = useState('');
   const [bio, setBio] = useState('');
-  const [avatar, setAvatar] = useState(EMOJIS[0]);
+  const [tone, setTone] = useState<string>(AVATAR_TONES[0]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
-    <Animated.View entering={FadeInDown.duration(400)}>
+    <Animated.View entering={rise}>
       <T v="h1" style={{ marginTop: space(4) }}>
         Become a creator
       </T>
       <T v="body" style={{ marginTop: space(2), marginBottom: space(5) }}>
-        Publish your trading rules as playbooks. Every time someone applies one, you earn your cut.
+        Publish your trading rules as playbooks. Each time someone applies one, you earn your cut.
       </T>
       <Card style={{ gap: space(4) }}>
-        <Row gap={8} style={{ flexWrap: 'wrap' }}>
-          {EMOJIS.map((e) => (
-            <Pressable key={e} onPress={() => setAvatar(e)} style={{ opacity: avatar === e ? 1 : 0.45 }}>
-              <Avatar emoji={e} size={44} />
-            </Pressable>
-          ))}
+        <Row gap={14}>
+          <Avatar name={name || 'You'} tone={tone} size={56} />
+          <Row gap={8} style={{ flex: 1, flexWrap: 'wrap' }}>
+            {AVATAR_TONES.map((t) => (
+              <Pressable key={t} onPress={() => setTone(t)} style={[s.swatchRing, tone === t && { borderColor: colors.ink }]} accessibilityLabel={`Color ${t}`}>
+                <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: toneOf(t).bg }} />
+              </Pressable>
+            ))}
+          </Row>
         </Row>
         <Field label="Display name" value={name} onChangeText={setName} placeholder="Riya Sharma" maxLength={40} />
-        <Field label="One-line bio" value={bio} onChangeText={setBio} placeholder="Scalps ETH, tight stops" maxLength={140} />
+        <Field label="One-line bio" value={bio} onChangeText={setBio} placeholder="Scalps ETH with tight stops" maxLength={140} />
         {error ? (
           <T v="small" color={colors.loss}>
             {error}
@@ -68,7 +76,8 @@ function ProfileForm({ address, onSaved }: { address: string; onSaved: () => voi
             setBusy(true);
             setError(null);
             try {
-              await api.saveTrader({ address, name, bio, avatar });
+              const proof = await proveOwner(sign, 'Save creator profile', address);
+              await api.saveTrader({ address, name, bio, avatar: tone, proof });
               onSaved();
             } catch (e) {
               setError(e instanceof Error ? e.message : String(e));
@@ -77,6 +86,9 @@ function ProfileForm({ address, onSaved }: { address: string; onSaved: () => voi
             }
           }}
         />
+        <T v="mono" style={{ textAlign: 'center' }}>
+          One free signature proves this wallet is yours
+        </T>
       </Card>
     </Animated.View>
   );
@@ -98,6 +110,7 @@ export default function Create() {
   const [sl, setSl] = useState(3);
   const [cut, setCut] = useState(0.5);
   const [picked, setPicked] = useState<string | null>(null);
+  const [info, setInfo] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -108,28 +121,31 @@ export default function Create() {
   const reading = useMemo(() => (candles ? readChart(candles) : null), [candles]);
   const setups = useMemo(() => (reading ? setupsFrom(reading) : []), [reading]);
 
-  const levels: Level[] = plan
-    ? [
-        { key: 'tp', price: plan.takeProfitPrice, label: `TP ${pct(tp)} ${fmtPrice(plan.takeProfitPrice)}`, color: colors.profit, draggable: true },
-        {
-          key: 'entry',
-          price: plan.entryPrice,
-          label: dip ? `Buy ${pct(-dip)} ${fmtPrice(plan.entryPrice)}` : 'Buy now',
-          color: colors.primary,
-          draggable: true,
-        },
-        { key: 'sl', price: plan.stopLossPrice, label: `SL ${pct(-sl)} ${fmtPrice(plan.stopLossPrice)}`, color: colors.loss, draggable: true },
-      ]
-    : [];
+  /** Moves the buy level only: take profit and stop keep their prices (their percentages are recomputed). */
+  const setEntry = (nextDip: number) => {
+    const d = round2(clamp(nextDip, L.dip.min, L.dip.max));
+    setPicked(null);
+    if (plan) {
+      const e = plan.marketPrice * (1 - d / 100);
+      setTp(round2(clamp(((plan.takeProfitPrice - e) / e) * 100, L.tp.min, L.tp.max)));
+      setSl(round2(clamp(((e - plan.stopLossPrice) / e) * 100, L.sl.min, L.sl.max)));
+    }
+    setDip(d);
+  };
+  const setTake = (v: number) => {
+    setPicked(null);
+    setTp(round2(clamp(v, L.tp.min, L.tp.max)));
+  };
+  const setStop = (v: number) => {
+    setPicked(null);
+    setSl(round2(clamp(v, L.sl.min, L.sl.max)));
+  };
 
-  /** Dragging a level on the chart rewrites the matching rule as a percentage. */
   const onDrag = (key: LevelKey, p: number) => {
     if (!plan) return;
-    setPicked(null);
-    const L = RULE_LIMITS;
-    if (key === 'entry') setDip(round1(clamp(((plan.marketPrice - p) / plan.marketPrice) * 100, L.dip.min, L.dip.max)));
-    if (key === 'tp') setTp(round1(clamp(((p - plan.entryPrice) / plan.entryPrice) * 100, L.tp.min, L.tp.max)));
-    if (key === 'sl') setSl(round1(clamp(((plan.entryPrice - p) / plan.entryPrice) * 100, L.sl.min, L.sl.max)));
+    if (key === 'entry') setEntry(((plan.marketPrice - p) / plan.marketPrice) * 100);
+    if (key === 'tp') setTake(((p - plan.entryPrice) / plan.entryPrice) * 100);
+    if (key === 'sl') setStop(((plan.entryPrice - p) / plan.entryPrice) * 100);
   };
 
   const applySetup = (x: Setup) => {
@@ -140,171 +156,166 @@ export default function Create() {
     setSl(x.rules.sl);
   };
 
+  const levels: Level[] = plan
+    ? [
+        { key: 'tp', price: plan.takeProfitPrice, label: `TP ${pct(tp)}`, color: colors.profit, draggable: true },
+        { key: 'entry', price: plan.entryPrice, label: dip ? `Buy ${pct(-dip)}` : 'Buy now', color: colors.ink, draggable: true },
+        { key: 'sl', price: plan.stopLossPrice, label: `SL ${pct(-sl)}`, color: colors.loss, draggable: true },
+      ]
+    : [];
+
   if (!w.address || profile.loading) {
     return (
       <Screen scroll={false}>
-        <ActivityIndicator color={colors.cyan} style={{ marginTop: 120 }} />
+        <ActivityIndicator color={colors.textDim} style={{ marginTop: 120 }} />
       </Screen>
     );
   }
   if (!profile.data?.trader) {
     return (
       <Screen>
-        <ProfileForm address={w.address} onSaved={profile.reload} />
+        <ProfileForm address={w.address} sign={w.signMessage} onSaved={profile.reload} />
       </Screen>
     );
   }
 
   const stepFor = (v: number) => (v < 1 ? 0.1 : 0.5);
+  const trader = profile.data.trader;
 
   return (
     <Screen>
-      <Row style={{ marginTop: space(3), gap: 12 }}>
-        <Avatar emoji={profile.data.trader.avatar} size={40} />
-        <View>
-          <T v="label">New playbook</T>
-          <T v="h3">by {profile.data.trader.name}</T>
+      <Row style={{ marginTop: space(3), marginBottom: space(4) }} gap={12}>
+        <View style={{ flex: 1 }}>
+          <T v="h1">New playbook</T>
+          <T v="small">as {trader.name}</T>
         </View>
+        <Avatar name={trader.name} tone={trader.avatar} size={40} />
       </Row>
 
-      <Card style={{ marginTop: space(5), gap: space(4) }}>
-        <Field label="Name" value={name} onChangeText={setName} placeholder="Dip Catcher" maxLength={32} />
-        <Field
-          label="What it does"
-          value={description}
-          onChangeText={setDescription}
-          placeholder="Buys small dips, exits quickly."
-          maxLength={200}
-          multiline
-          style={{ height: 76, paddingTop: 14, textAlignVertical: 'top' }}
-        />
-      </Card>
+      <NetworkSwitch
+        value={chain}
+        onChange={(c) => {
+          setChain(c);
+          setPicked(null);
+          setInfo(false);
+        }}
+      />
 
-      <Card style={{ marginTop: space(4), gap: space(3) }}>
-        <T v="label">Trades on</T>
-        <NetworkSwitch
-          value={chain}
-          onChange={(c) => {
-            setChain(c);
-            setPicked(null);
-          }}
-        />
-        <T v="small">{chain === 'solana' ? 'Buys SOL with USDC on Solana.' : 'Buys ETH with USDC on Base.'}</T>
-      </Card>
-
-      <Card style={{ marginTop: space(4) }} glow>
-        <Row style={{ justifyContent: 'space-between', marginBottom: space(3) }}>
-          <T v="label">{net.asset} / USD chart</T>
-          <T v="num" style={{ fontSize: 15 }}>
-            {price ? fmtPrice(price.price) : '—'}
-          </T>
-        </Row>
-        <TradeChart candles={candles} tf={tf} onTf={setTf} now={price?.price ?? null} levels={levels} onDrag={onDrag} />
-      </Card>
-
-      {reading ? (
-        <Card style={{ marginTop: space(4), gap: space(3) }}>
-          <Row style={{ justifyContent: 'space-between' }}>
-            <T v="label">What the chart says</T>
-            <T v="small">last {reading.lookback} candles</T>
-          </Row>
-          <Row style={{ justifyContent: 'space-between' }}>
-            {[
-              { k: 'Support', v: fmtPrice(reading.support), c: colors.profit },
-              { k: 'Resistance', v: fmtPrice(reading.resistance), c: colors.loss },
-              { k: 'Typical move', v: `${reading.atr.toFixed(1)}%`, c: colors.text },
-              { k: 'Trend', v: pct(reading.trendPct), c: reading.trendPct >= 0 ? colors.profit : colors.loss },
-            ].map((x) => (
-              <View key={x.k}>
-                <T v="small">{x.k}</T>
-                <T v="num" color={x.c} style={{ fontSize: 14, marginTop: 2 }}>
-                  {x.v}
-                </T>
-              </View>
-            ))}
-          </Row>
-          <T v="small" color={colors.textDim}>
-            Start from the chart (one tap), then fine-tune by dragging the lines or with + and −:
-          </T>
-          {setups.map((x) => (
-            <Pressable key={x.key} onPress={() => applySetup(x)} style={[s.setup, picked === x.key && s.setupOn]}>
-              <T v="bodyMed">{x.title}</T>
-              <T v="small" color={colors.cyan} style={{ marginTop: 2 }}>
-                {x.rules.dip ? `Buy ${pct(-x.rules.dip)}` : 'Buy now'} · TP {pct(x.rules.tp)} · SL {pct(-x.rules.sl)}
-              </T>
-              <T v="small" style={{ marginTop: 2 }}>
-                {x.why}
-              </T>
+      <Animated.View entering={rise}>
+        <Card glow style={{ marginTop: space(4), padding: space(4) }}>
+          <Row style={{ justifyContent: 'space-between', marginBottom: space(3) }}>
+            <View>
+              <T v="small">{net.asset} / USD</T>
+              <T v="numLg">{price ? usd(price.price) : '—'}</T>
+            </View>
+            <Pressable
+              onPress={() => setInfo((v) => !v)}
+              style={({ pressed }) => [s.infoBtn, info && { backgroundColor: colors.ink }, { transform: [{ scale: pressed ? 0.94 : 1 }] }]}
+              accessibilityLabel={info ? 'Hide chart details' : 'Show chart details'}
+              hitSlop={8}>
+              {info ? <X size={16} strokeWidth={1.75} color={colors.onInk} /> : <Info size={16} strokeWidth={1.75} color={colors.text} />}
             </Pressable>
-          ))}
-        </Card>
-      ) : null}
+          </Row>
 
-      <Card style={{ marginTop: space(4) }}>
-        <Row style={{ justifyContent: 'space-between' }}>
-          <T v="label">Rules</T>
-          <T v="small">
-            {net.asset} now {price ? fmtPrice(price.price) : '—'}
+          {info && reading ? (
+            <Animated.View entering={FadeIn.duration(DUR.menu)} exiting={FadeOut.duration(DUR.fast)} style={s.infoRow}>
+              {[
+                { k: 'Support', v: fmtPrice(reading.support) },
+                { k: 'Resistance', v: fmtPrice(reading.resistance) },
+                { k: 'Avg move', v: `${reading.atr.toFixed(1)}%` },
+                { k: 'Trend', v: pct(reading.trendPct), c: reading.trendPct >= 0 ? colors.profit : colors.loss },
+              ].map((x) => (
+                <View key={x.k}>
+                  <T v="mono" style={{ fontSize: 11 }}>
+                    {x.k}
+                  </T>
+                  <T v="mono" color={x.c ?? colors.text} style={{ fontFamily: fonts.monoMed }}>
+                    {x.v}
+                  </T>
+                </View>
+              ))}
+            </Animated.View>
+          ) : null}
+
+          <TradeChart candles={candles} tf={tf} onTf={setTf} now={price?.price ?? null} levels={levels} onDrag={onDrag} />
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} style={{ marginTop: space(3) }}>
+            {setups.map((x) => (
+              <Pressable
+                key={x.key}
+                onPress={() => applySetup(x)}
+                style={({ pressed }) => [s.setup, picked === x.key && s.setupOn, { transform: [{ scale: pressed ? 0.97 : 1 }] }]}>
+                <T v="small" color={colors.text} style={{ fontFamily: fonts.bodyMed }}>
+                  {x.title}
+                </T>
+                <T v="mono" style={{ fontSize: 11 }}>
+                  {x.rules.dip ? pct(-x.rules.dip) : 'now'} · {pct(x.rules.tp)} · {pct(-x.rules.sl)}
+                </T>
+              </Pressable>
+            ))}
+          </ScrollView>
+          <T v="mono" style={{ marginTop: space(2), fontSize: 11 }}>
+            Drag Buy, TP or SL on the chart. Each moves on its own.
           </T>
-        </Row>
+        </Card>
+      </Animated.View>
+
+      <Card style={{ marginTop: space(4), paddingVertical: space(2) }}>
         <Stepper
-          label="Entry"
-          hint={dip === 0 ? 'Buy at market right away' : 'Limit buy below the current price'}
+          label="Buy"
+          hint={dip === 0 ? 'At market, right away' : 'Limit, below the price'}
           value={dip}
-          onChange={(v) => {
-            setPicked(null);
-            setDip(v);
-          }}
+          onChange={setEntry}
           step={0.5}
-          min={RULE_LIMITS.dip.min}
-          max={RULE_LIMITS.dip.max}
+          min={L.dip.min}
+          max={L.dip.max}
           format={(v) => (v === 0 ? 'Now' : pct(-v))}
-          tone={colors.primary}
           sub={plan ? fmtPrice(plan.entryPrice) : undefined}
         />
         <Stepper
           label="Take profit"
-          hint="Above the entry"
+          hint="Above the buy"
           value={tp}
-          onChange={(v) => {
-            setPicked(null);
-            setTp(v);
-          }}
+          onChange={setTake}
           step={stepFor(tp)}
-          min={RULE_LIMITS.tp.min}
-          max={RULE_LIMITS.tp.max}
+          min={L.tp.min}
+          max={L.tp.max}
           format={(v) => pct(v)}
           tone={colors.profit}
           sub={plan ? `${fmtPrice(plan.takeProfitPrice)} · ${signedUsd(plan.profitAtTpUsd)}` : undefined}
         />
         <Stepper
-          label="Stop-loss"
-          hint="Required, protects followers"
+          label="Stop"
+          hint="Required"
           value={sl}
-          onChange={(v) => {
-            setPicked(null);
-            setSl(v);
-          }}
+          onChange={setStop}
           step={stepFor(sl)}
-          min={RULE_LIMITS.sl.min}
-          max={RULE_LIMITS.sl.max}
+          min={L.sl.min}
+          max={L.sl.max}
           format={(v) => pct(-v)}
           tone={colors.loss}
           sub={plan ? `${fmtPrice(plan.stopLossPrice)} · ${signedUsd(plan.lossAtSlUsd)}` : undefined}
         />
-        <Stepper label="Your cut" hint="Of each applied trade" value={cut} onChange={setCut} step={0.1} min={0} max={MAX_CUT_PCT} format={(v) => `${v.toFixed(1)}%`} tone={colors.cyan} sub={plan ? `${usd(plan.creatorFeeUsd)} per $100` : undefined} />
+        <Stepper
+          label="Your cut"
+          hint="Per applied trade"
+          value={cut}
+          onChange={setCut}
+          step={0.1}
+          min={0}
+          max={MAX_CUT_PCT}
+          format={(v) => `${v.toFixed(1)}%`}
+          sub={plan ? `${usd(plan.creatorFeeUsd)} per $100` : undefined}
+        />
+        <T v="mono" style={{ textAlign: 'center', paddingVertical: space(2), fontSize: 11 }}>
+          Profit and loss shown for a $100 trade
+        </T>
       </Card>
 
-      {plan ? (
-        <Card style={{ marginTop: space(4) }}>
-          <T v="small" style={{ marginBottom: 4 }}>
-            When someone applies $100:
-          </T>
-          <KV k="They make at take profit" v={signedUsd(plan.profitAtTpUsd)} color={colors.profit} />
-          <KV k="They lose at stop-loss" v={signedUsd(plan.lossAtSlUsd)} color={colors.loss} />
-          <KV k="You earn" v={usd(plan.creatorFeeUsd)} color={colors.cyan} />
-        </Card>
-      ) : null}
+      <Card style={{ marginTop: space(4), gap: space(4) }}>
+        <Field label="Name" value={name} onChangeText={setName} placeholder="Dip Catcher" maxLength={32} />
+        <Field label="What it does" value={description} onChangeText={setDescription} placeholder="Buys small dips, exits quickly" maxLength={200} />
+      </Card>
 
       {error ? (
         <T v="small" color={colors.loss} style={{ marginTop: space(3) }}>
@@ -320,6 +331,7 @@ export default function Create() {
           setBusy(true);
           setError(null);
           try {
+            const proof = await proveOwner(w.signMessage, 'Publish playbook', w.address!);
             const { template } = await api.createTemplate({
               creator: w.address!,
               name,
@@ -329,6 +341,7 @@ export default function Create() {
               stopLossPct: sl,
               cutPct: cut,
               chain,
+              proof,
             });
             setName('');
             setDescription('');
@@ -340,28 +353,50 @@ export default function Create() {
           }
         }}
       />
+      <T v="mono" style={{ textAlign: 'center', marginTop: space(2) }}>
+        {name.trim().length < 3 ? 'Name it to publish' : 'One free signature to publish'}
+      </T>
     </Screen>
   );
 }
 
 const s = StyleSheet.create({
-  setup: {
-    padding: space(3),
-    borderRadius: radius.md,
-    backgroundColor: colors.cardHi,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  setupOn: { borderColor: colors.cyan, backgroundColor: '#3DD6FF14' },
   input: {
-    height: 52,
-    borderRadius: radius.md,
+    height: 48,
+    borderRadius: radius.sm,
     borderWidth: 1,
     borderColor: colors.borderHi,
-    backgroundColor: colors.bgElevated,
+    backgroundColor: colors.bg,
     color: colors.text,
     paddingHorizontal: space(4),
     fontFamily: fonts.bodyMed,
-    fontSize: 16,
+    fontSize: 15,
   },
+  swatchRing: { padding: 2, borderRadius: 16, borderWidth: 1.5, borderColor: 'transparent' },
+  infoBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.borderHi,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: space(3),
+    marginBottom: space(3),
+    borderRadius: radius.sm,
+    backgroundColor: colors.bg,
+  },
+  setup: {
+    paddingHorizontal: space(3),
+    paddingVertical: space(2),
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.borderHi,
+    backgroundColor: colors.card,
+  },
+  setupOn: { backgroundColor: colors.accent, borderColor: colors.ink },
 });

@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 
 import { T } from '@/ui/Text';
-import { colors, radius, space } from '@/ui/theme';
+import { colors, fonts, radius, space } from '@/ui/theme';
 
 /** Numbered recovery words in two columns, covered until the user taps to reveal. */
 export function PhraseGrid({ words, hidden, onReveal }: { words: string[]; hidden: boolean; onReveal: () => void }) {
@@ -63,10 +63,10 @@ const st = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  num: { width: 18, fontFamily: 'Inter_600SemiBold' },
+  num: { width: 18, fontFamily: fonts.bodySemi },
   cover: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(17,19,28,0.97)',
+    backgroundColor: 'rgba(244,244,239,0.97)',
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radius.lg,
@@ -77,7 +77,7 @@ const st = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: '#3DD6FF14',
+    backgroundColor: colors.cardHi,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -1,4 +1,5 @@
 // Turns Flash order state into Playbook position status (GET /orders/{id} for the entry and its bracket).
+import { NETWORKS } from '@/lib/constants';
 import type { Application, PositionStatus, TxRef } from '@/lib/types';
 
 import { db } from './db';
@@ -28,11 +29,12 @@ const num = (s: string | null | undefined) => (s ? Number(s) : 0);
 const sumFees = (d: FlashOrderDetail) => d.fills.reduce((s, f) => s + num(f.integratorFeeNotional), 0);
 
 async function refreshLive(app: Application) {
+  const asset = NETWORKS[app.chain ?? 'base'].asset;
   const entry = await getOrder(app.orderId, app.funder);
   const o = entry.order;
   const txs: TxRef[] = [
     ...app.txs.filter((t) => t.label === 'Approval' || t.label === 'Setup'),
-    ...entry.fills.map((f, i) => ({ label: entry.fills.length > 1 ? `Buy fill ${i + 1}` : 'Bought ETH', hash: f.transactionId })),
+    ...entry.fills.map((f, i) => ({ label: entry.fills.length > 1 ? `Buy fill ${i + 1}` : `Bought ${asset}`, hash: f.transactionId })),
   ];
   let creatorFeeUsd = sumFees(entry);
   let status: PositionStatus;
@@ -65,7 +67,7 @@ async function refreshLive(app: Application) {
     if (exit) {
       creatorFeeUsd += sumFees(exit);
       if (exit.fills.length > 0) {
-        for (const f of exit.fills) txs.push({ label: 'Sold ETH', hash: f.transactionId });
+        for (const f of exit.fills) txs.push({ label: `Sold ${asset}`, hash: f.transactionId });
         exitPrice = num(exit.order.filled?.averageNotionalPrice) || num(exit.fills[0]?.fillPrice);
         // One-cancels-other: whichever leg fired decides; the exit price sits near that leg's trigger.
         const midpoint = (app.takeProfitPrice + app.stopLossPrice) / 2;
