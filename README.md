@@ -1,56 +1,65 @@
-# Welcome to your Expo app 👋
+# Playbook
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+An app store for trading strategies. Traders publish **playbooks** (entry, take-profit, stop-loss and their cut);
+anyone applies one to their own wallet in one tap. Orders are executed by **Definitive Flash** on **Base**
+as a limit or market buy with an attached take-profit / stop-loss bracket, and the creator's cut is charged
+through Flash's integrator fee.
 
-## Get started
+Built for the ETHGlobal Mumbai **Definitive** track ("Best Use of Flash Advanced Orders in a Social App").
 
-1. Install dependencies
+## How it works
 
-   ```bash
-   npm install
-   ```
+| Step | What happens |
+|---|---|
+| Create | Trader creates a profile and publishes a playbook in percentages (e.g. buy −2%, TP +5%, SL −3%, 0.5% cut) |
+| Apply | User enters an amount. The server turns the percentages into prices at the live ETH price and asks Flash for a quote with `attachedBracket` and `flashIntegratorFeeBps` |
+| Sign | First time only: USDC + WETH approvals. Then two free EIP-712 signatures (entry + protection) |
+| Execute | Flash holds the order, fills the entry, then the bracket sells at take-profit or stop-loss |
+| Earn | Each fill's `integratorFeeNotional` is credited to the playbook's creator |
 
-2. Start the app
+Paper mode runs the same flow with live prices but simulated fills, so judges can try it without funds.
 
-   ```bash
-   npx expo start
-   ```
+## Stack
 
-In the output, you'll find options to open the app in a
+- Expo SDK 58 / React Native 0.88, Expo Router (screens in `src/app`, server routes in `src/app/api`)
+- Privy embedded wallets (email login) on Base, viem for reads and receipts
+- Flash API called only from the server routes (`src/server/flash.ts`); the API key never ships in the app
+- JSON file store in `./data` for the hackathon (swap for Supabase before deploying)
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## Setup
 
-You can start developing by editing the files inside the **src/app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+1. `npm install`
+2. `cp .env.example .env` and fill in:
+   - `FLASH_API_KEY`: your key from app.definitive.fi (More → Flash → Create Flash Key). Empty = the public dev key from the Flash docs (fees are not collected).
+   - `EXPO_PUBLIC_PRIVY_APP_ID` / `EXPO_PUBLIC_PRIVY_CLIENT_ID`: from dashboard.privy.io. Add an Android app client for `com.playbook.app`. Empty = Paper mode only.
+3. Android toolchain (Windows): set `ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk` and add `%ANDROID_HOME%\platform-tools` to `PATH`.
 
-## Get a fresh project
+## Run
 
-When you're ready, run:
+Privy uses native modules, so the app needs a **development build** (Expo Go will not work):
 
 ```bash
-npm run reset-project
+npx expo run:android
 ```
 
-This command will move the starter code to the **example** directory and create a blank **src/app** directory where you can start developing.
+After the first build, start the dev server (it also serves the API routes) with:
 
-### Other setup steps
+```bash
+npx expo start
+```
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+The phone must reach your laptop over the same Wi-Fi network.
 
-## Learn more
+## Demo tips
 
-To learn more about developing your project with Expo, look at the following resources:
+- Use **Quick Scalp** (market buy, ±0.3%) so the fill and the take-profit happen on camera.
+- Fund the demo wallet on Base with ~$30 USDC and a little ETH for the two one-time approvals (Profile → QR).
+- Fills link to Basescan from the Positions tab.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## Checks
 
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```bash
+npx tsc --noEmit
+npx expo lint
+npx expo-doctor
+```

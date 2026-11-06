@@ -1,0 +1,154 @@
+import * as Haptics from 'expo-haptics';
+import { Check, CircleDashed, X } from 'lucide-react-native';
+import { useEffect } from 'react';
+import { ActivityIndicator, Modal, StyleSheet, View } from 'react-native';
+import Animated, { FadeIn, FadeInDown, ZoomIn } from 'react-native-reanimated';
+
+import { STEPS, type StepKey, type StepState } from '@/lib/applyFlow';
+import { usd } from '@/lib/pricing';
+import type { Application } from '@/lib/types';
+import { Button, Row } from '@/ui/primitives';
+import { T } from '@/ui/Text';
+import { colors, radius, space } from '@/ui/theme';
+
+export type StepView = Record<StepKey, { state: StepState; detail?: string }>;
+
+export const freshSteps = (): StepView =>
+  Object.fromEntries(STEPS.map((s) => [s.key, { state: 'pending' as StepState }])) as StepView;
+
+function StepIcon({ state }: { state: StepState }) {
+  if (state === 'active') return <ActivityIndicator size="small" color={colors.cyan} />;
+  if (state === 'done')
+    return (
+      <Animated.View entering={ZoomIn} style={[st.icon, { backgroundColor: colors.profit }]}>
+        <Check size={14} color={colors.bg} strokeWidth={3} />
+      </Animated.View>
+    );
+  if (state === 'error')
+    return (
+      <View style={[st.icon, { backgroundColor: colors.loss }]}>
+        <X size={14} color={colors.bg} strokeWidth={3} />
+      </View>
+    );
+  return <CircleDashed size={20} color={state === 'skipped' ? colors.border : colors.textMute} />;
+}
+
+export function ApplySheet({
+  visible,
+  steps,
+  error,
+  result,
+  templateName,
+  onClose,
+  onViewPosition,
+}: {
+  visible: boolean;
+  steps: StepView;
+  error: string | null;
+  result: Application | null;
+  templateName: string;
+  onClose: () => void;
+  onViewPosition: () => void;
+}) {
+  useEffect(() => {
+    if (result) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    if (error) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+  }, [result, error]);
+
+  const busy = !result && !error;
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={busy ? undefined : onClose}>
+      <View style={st.overlay}>
+        <Animated.View entering={FadeInDown.springify().damping(18)} style={st.sheet}>
+          {result ? (
+            <Animated.View entering={FadeIn} style={{ alignItems: 'center', gap: space(3) }}>
+              <Animated.View entering={ZoomIn.springify()} style={st.bigCheck}>
+                <Check size={38} color={colors.bg} strokeWidth={3} />
+              </Animated.View>
+              <T v="h1" style={{ textAlign: 'center' }}>
+                Playbook applied
+              </T>
+              <T v="body" style={{ textAlign: 'center' }}>
+                {templateName} is running on {usd(result.amountUsd)}.{' '}
+                {result.orderType === 'market' ? 'Buying now' : `Buying at ${usd(result.entryPrice)}`}, protected by a
+                take-profit at {usd(result.takeProfitPrice)} and a stop at {usd(result.stopLossPrice)}.
+              </T>
+              {result.mode === 'paper' && (
+                <T v="small" color={colors.warn}>
+                  Paper mode: simulated, no real funds moved.
+                </T>
+              )}
+              <Button title="View position" onPress={onViewPosition} style={{ alignSelf: 'stretch', marginTop: space(2) }} />
+              <Button title="Done" variant="ghost" onPress={onClose} size="md" />
+            </Animated.View>
+          ) : (
+            <>
+              <T v="label">Applying</T>
+              <T v="h2" style={{ marginTop: 4, marginBottom: space(4) }}>
+                {templateName}
+              </T>
+              {STEPS.map((s) => {
+                const v = steps[s.key];
+                return (
+                  <Row key={s.key} gap={12} style={st.stepRow}>
+                    <View style={{ width: 24, alignItems: 'center' }}>
+                      <StepIcon state={v.state} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <T
+                        v="bodyMed"
+                        color={v.state === 'skipped' ? colors.textMute : v.state === 'pending' ? colors.textDim : colors.text}>
+                        {s.label}
+                      </T>
+                      {v.detail ? <T v="small">{v.detail}</T> : null}
+                    </View>
+                  </Row>
+                );
+              })}
+              {error ? (
+                <View style={st.errorBox}>
+                  <T v="small" color={colors.loss}>
+                    {error}
+                  </T>
+                </View>
+              ) : null}
+              {!busy && <Button title="Close" variant="secondary" onPress={onClose} style={{ marginTop: space(4) }} />}
+            </>
+          )}
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+const st = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: colors.bgElevated,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: space(6),
+    paddingBottom: space(10),
+  },
+  stepRow: { paddingVertical: 9 },
+  icon: { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  bigCheck: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: colors.profit,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: space(2),
+  },
+  errorBox: {
+    marginTop: space(3),
+    padding: space(3),
+    borderRadius: radius.md,
+    backgroundColor: '#FF5C7A12',
+    borderWidth: 1,
+    borderColor: '#FF5C7A44',
+  },
+});
