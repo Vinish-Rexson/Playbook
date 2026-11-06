@@ -1,10 +1,9 @@
 /// <reference types="node" />
-// Tiny JSON-file store for the hackathon. Lives in ./data (git-ignored).
-// Swap for Supabase/Postgres before deploying the API routes to a serverless host.
-import fs from 'node:fs';
-import path from 'node:path';
+// Postgres store (Supabase). Tables live in the `playbook` schema: see supabase/migrations and
+// `npm run db:push`. Server-only: reached from the API routes, never from the app bundle.
+import postgres from 'postgres';
 
-import type { Application, Template, TemplateStats, Trader } from '@/lib/types';
+import type { Application, ApplyPlan, Template, TemplateStats, Trader } from '@/lib/types';
 
 export type PendingQuote = {
   quoteId: string;
@@ -19,163 +18,229 @@ export type PendingQuote = {
     bracketOrder: string | null;
     bracketPermit: string | null;
   };
-  plan: import('@/lib/types').ApplyPlan;
+  plan: ApplyPlan;
   createdAt: number;
 };
-
-type DB = {
-  traders: Record<string, Trader>;
-  templates: Template[];
-  applications: Application[];
-  quotes: Record<string, PendingQuote>;
-};
-
-const FILE = path.join(process.cwd(), 'data', 'playbook-db.json');
-let cache: DB | null = null;
-
-const key = (address: string) => address.toLowerCase();
-export const newId = (prefix: string) =>
-  `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 /** Playbook's own account: owns the starter strategies (fees on them go to the Playbook integrator key). */
 export const HOUSE = '0x0000000000000000000000000000000000000000';
 
-const houseTrader = (): Trader => ({
-  address: HOUSE,
-  name: 'Playbook',
-  handle: 'playbook',
-  bio: 'Starter strategies from the Playbook team. Publish your own from the Create tab.',
-  avatar: '📘',
-  createdAt: Date.now(),
-  official: true,
+export const newId = (prefix: string) =>
+  `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+const QUOTE_TTL_MS = 15 * 60_000;
+const lc = (a: string) => a.toLowerCase();
+
+// One pool per server process. Kept on globalThis so dev reloads of this module don't open new pools.
+const g = globalThis as typeof globalThis & { __playbookSql?: postgres.Sql };
+function sql() {
+  if (g.__playbookSql) return g.__playbookSql;
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error('Server is missing DATABASE_URL (see .env.example)');
+  g.__playbookSql = postgres(url, {
+    ssl: 'require',
+    // Works with Supabase's transaction pooler too, which doesn't support prepared statements.
+    prepare: false,
+    max: 5,
+    idle_timeout: 30,
+    onnotice: () => {},
+    // snake_case columns <-> camelCase fields; JSON values (txs, quote bodies) are left untouched.
+    transform: { column: { from: postgres.toCamel, to: postgres.fromCamel }, json: false, undefined: null },
+  });
+  return g.__playbookSql;
+}
+
+// Timestamps are timestamptz in Postgres and epoch milliseconds in the app.
+type Row = Record<string, any>;
+const ms = (d: unknown) => (d instanceof Date ? d.getTime() : Number(d));
+const toTrader = (r: Row): Trader => ({
+  address: r.address,
+  name: r.name,
+  handle: r.handle,
+  bio: r.bio,
+  avatar: r.avatar,
+  createdAt: ms(r.createdAt),
+  official: r.official || undefined,
+});
+const toTemplate = (r: Row): Template => ({
+  id: r.id,
+  creator: r.creator,
+  name: r.name,
+  description: r.description,
+  entryOffsetPct: r.entryOffsetPct,
+  takeProfitPct: r.takeProfitPct,
+  stopLossPct: r.stopLossPct,
+  cutPct: r.cutPct,
+  createdAt: ms(r.createdAt),
+});
+const opt = <T>(v: T | null) => v ?? undefined;
+const toApplication = (r: Row): Application => ({
+  id: r.id,
+  templateId: r.templateId,
+  templateName: r.templateName,
+  creator: r.creator,
+  funder: r.funder,
+  amountUsd: r.amountUsd,
+  orderType: r.orderType,
+  marketPriceAtApply: r.marketPriceAtApply,
+  entryPrice: r.entryPrice,
+  takeProfitPrice: r.takeProfitPrice,
+  stopLossPrice: r.stopLossPrice,
+  cutBps: r.cutBps,
+  orderId: r.orderId,
+  bracketOrderId: r.bracketOrderId,
+  status: r.status,
+  filledPrice: opt(r.filledPrice),
+  exitPrice: opt(r.exitPrice),
+  pnlUsd: opt(r.pnlUsd),
+  creatorFeeUsd: r.creatorFeeUsd,
+  txs: r.txs ?? [],
+  closeReason: r.closeReason,
+  createdAt: ms(r.createdAt),
+  updatedAt: ms(r.updatedAt),
 });
 
-function starterTemplates(): Template[] {
-  const now = Date.now();
-  return [
-    { id: 'tpl_quickscalp', creator: HOUSE, name: 'Quick Scalp', description: 'Buys now, takes profit on a 0.3% move, cuts the loss at 0.3%. Fast in, fast out.', entryOffsetPct: 0, takeProfitPct: 0.3, stopLossPct: 0.3, cutPct: 0.5, createdAt: now - 4 },
-    { id: 'tpl_dipcatcher', creator: HOUSE, name: 'Dip Catcher', description: 'Waits for a 2% dip, then rides the bounce to +5%. Stop at -3% keeps losses small.', entryOffsetPct: -2, takeProfitPct: 5, stopLossPct: 3, cutPct: 0.5, createdAt: now - 3 },
-    { id: 'tpl_rangerider', creator: HOUSE, name: 'Range Rider', description: 'Small dip, small target. Designed to hit often in sideways markets.', entryOffsetPct: -1, takeProfitPct: 2.5, stopLossPct: 1.5, cutPct: 0.3, createdAt: now - 2 },
-    { id: 'tpl_deepvalue', creator: HOUSE, name: 'Deep Value', description: 'Only buys a real flush: 6% below today. Targets a 12% recovery.', entryOffsetPct: -6, takeProfitPct: 12, stopLossPct: 5, cutPct: 1, createdAt: now - 1 },
-  ];
-}
+/** Columns an application update may change (everything else is fixed when the position is created). */
+const APP_PATCHABLE = [
+  'status',
+  'filledPrice',
+  'exitPrice',
+  'pnlUsd',
+  'bracketOrderId',
+  'creatorFeeUsd',
+  'txs',
+  'closeReason',
+] as const satisfies readonly (keyof Application)[];
 
-function seed(): DB {
-  return { traders: { [key(HOUSE)]: houseTrader() }, templates: starterTemplates(), applications: [], quotes: {} };
-}
-
-/** Older data files had demo traders with made-up addresses and simulated (paper) trades: drop both. */
-function migrate(d: DB & { traders: Record<string, Trader & { demo?: boolean }> }) {
-  let changed = false;
-  const demo = new Set(Object.values(d.traders).filter((t) => t.demo).map((t) => key(t.address)));
-  if (demo.size) {
-    for (const k of demo) delete d.traders[k];
-    for (const t of d.templates) if (demo.has(key(t.creator))) t.creator = HOUSE;
-    changed = true;
-  }
-  if (!d.traders[key(HOUSE)]) {
-    d.traders[key(HOUSE)] = houseTrader();
-    changed = true;
-  }
-  const before = d.applications.length;
-  d.applications = d.applications.filter((a) => (a as { mode?: string }).mode !== 'paper' && !a.orderId.startsWith('paper'));
-  for (const a of d.applications) delete (a as { mode?: string }).mode;
-  if (d.applications.length !== before) changed = true;
-  for (const [id, q] of Object.entries(d.quotes)) {
-    if ((q as { mode?: string }).mode === 'paper') {
-      delete d.quotes[id];
-      changed = true;
-    }
-  }
-  return changed;
-}
-
-function load(): DB {
-  if (cache) return cache;
-  try {
-    cache = JSON.parse(fs.readFileSync(FILE, 'utf8')) as DB;
-    cache.quotes ??= {};
-    if (migrate(cache)) save();
-  } catch {
-    cache = seed();
-    save();
-  }
-  return cache;
-}
-
-function save() {
-  if (!cache) return;
-  fs.mkdirSync(path.dirname(FILE), { recursive: true });
-  fs.writeFileSync(FILE, JSON.stringify(cache, null, 2));
-}
+type AppFilter = { funder?: string; templateId?: string; creator?: string; limit?: number };
 
 export const db = {
   // traders
-  getTrader: (address: string) => load().traders[key(address)] ?? null,
-  listTraders: () => Object.values(load().traders),
-  upsertTrader(t: Omit<Trader, 'createdAt'> & { createdAt?: number }) {
-    const d = load();
-    const existing = d.traders[key(t.address)];
-    d.traders[key(t.address)] = { ...existing, ...t, createdAt: existing?.createdAt ?? Date.now() };
-    save();
-    return d.traders[key(t.address)];
+  async getTrader(address: string) {
+    const [r] = await sql()`select * from playbook.traders where address = ${lc(address)}`;
+    return r ? toTrader(r) : null;
+  },
+  async getTraders(addresses: string[]) {
+    if (!addresses.length) return new Map<string, Trader>();
+    const rows = await sql()`select * from playbook.traders where address in ${sql()(addresses.map(lc))}`;
+    return new Map(rows.map((r) => [r.address as string, toTrader(r)]));
+  },
+  async listTraders() {
+    const rows = await sql()`select * from playbook.traders order by created_at`;
+    return rows.map(toTrader);
+  },
+  async upsertTrader(t: Pick<Trader, 'address' | 'name' | 'handle' | 'bio' | 'avatar'>) {
+    const [r] = await sql()`
+      insert into playbook.traders (address, name, handle, bio, avatar)
+      values (${lc(t.address)}, ${t.name}, ${t.handle}, ${t.bio}, ${t.avatar})
+      on conflict (address) do update
+        set name = excluded.name, handle = excluded.handle, bio = excluded.bio, avatar = excluded.avatar
+      returning *`;
+    return toTrader(r);
   },
 
   // templates
-  listTemplates: () => [...load().templates].sort((a, b) => b.createdAt - a.createdAt),
-  getTemplate: (id: string) => load().templates.find((t) => t.id === id) ?? null,
-  createTemplate(t: Omit<Template, 'id' | 'createdAt'>) {
-    const d = load();
-    const tpl: Template = { ...t, id: newId('tpl'), createdAt: Date.now() };
-    d.templates.push(tpl);
-    save();
-    return tpl;
+  async listTemplates(creator?: string) {
+    const rows = creator
+      ? await sql()`select * from playbook.templates where creator = ${lc(creator)} order by created_at desc`
+      : await sql()`select * from playbook.templates order by created_at desc`;
+    return rows.map(toTemplate);
+  },
+  async getTemplate(id: string) {
+    const [r] = await sql()`select * from playbook.templates where id = ${id}`;
+    return r ? toTemplate(r) : null;
+  },
+  async createTemplate(t: Omit<Template, 'id' | 'createdAt'>) {
+    const [r] = await sql()`
+      insert into playbook.templates ${sql()({ ...t, id: newId('tpl'), creator: lc(t.creator) })}
+      returning *`;
+    return toTemplate(r);
   },
 
-  // applications
-  listApplications: (filter: (a: Application) => boolean = () => true) =>
-    load().applications.filter(filter).sort((a, b) => b.createdAt - a.createdAt),
-  getApplication: (id: string) => load().applications.find((a) => a.id === id) ?? null,
-  addApplication(a: Application) {
-    load().applications.push(a);
-    save();
-    return a;
+  // applications (positions)
+  async listApplications(f: AppFilter = {}) {
+    const s = sql();
+    const rows = await s`
+      select * from playbook.applications
+      where true
+        ${f.funder ? s`and lower(funder) = ${lc(f.funder)}` : s``}
+        ${f.templateId ? s`and template_id = ${f.templateId}` : s``}
+        ${f.creator ? s`and creator = ${lc(f.creator)}` : s``}
+      order by created_at desc
+      ${f.limit ? s`limit ${f.limit}` : s``}`;
+    return rows.map(toApplication);
   },
-  updateApplication(id: string, patch: Partial<Application>) {
-    const d = load();
-    const i = d.applications.findIndex((a) => a.id === id);
-    if (i < 0) return null;
-    d.applications[i] = { ...d.applications[i], ...patch, updatedAt: Date.now() };
-    save();
-    return d.applications[i];
+  async getApplication(id: string) {
+    const [r] = await sql()`select * from playbook.applications where id = ${id}`;
+    return r ? toApplication(r) : null;
+  },
+  async addApplication(a: Application) {
+    const { createdAt, updatedAt, txs, ...rest } = a;
+    const [r] = await sql()`
+      insert into playbook.applications ${sql()({
+        ...rest,
+        creator: lc(a.creator),
+        txs: sql().json(txs),
+        createdAt: new Date(createdAt),
+        updatedAt: new Date(updatedAt),
+      })}
+      returning *`;
+    return toApplication(r);
+  },
+  async updateApplication(id: string, patch: Partial<Application>) {
+    const fields: Row = {};
+    for (const k of APP_PATCHABLE) if (k in patch) fields[k] = k === 'txs' ? sql().json(patch.txs ?? []) : patch[k];
+    if (!Object.keys(fields).length) return db.getApplication(id);
+    const [r] = await sql()`
+      update playbook.applications set ${sql()(fields)}, updated_at = now()
+      where id = ${id}
+      returning *`;
+    return r ? toApplication(r) : null;
   },
 
   // pending quotes (so submit re-uses the exact server-built request: fee cannot be tampered with)
-  putQuote(q: PendingQuote) {
-    const d = load();
-    const cutoff = Date.now() - 15 * 60_000;
-    for (const [id, old] of Object.entries(d.quotes)) if (old.createdAt < cutoff) delete d.quotes[id];
-    d.quotes[q.quoteId] = q;
-    save();
+  async putQuote(q: PendingQuote) {
+    const s = sql();
+    await s`delete from playbook.quotes where created_at < ${new Date(Date.now() - QUOTE_TTL_MS)}`;
+    await s`
+      insert into playbook.quotes (quote_id, template_id, funder, body, bracket, typed, plan, created_at)
+      values (${q.quoteId}, ${q.templateId}, ${q.funder}, ${s.json(q.body)}, ${q.bracket ? s.json(q.bracket) : null},
+              ${s.json(q.typed)}, ${s.json(q.plan)}, ${new Date(q.createdAt)})
+      on conflict (quote_id) do nothing`;
   },
-  takeQuote(quoteId: string) {
-    const d = load();
-    const q = d.quotes[quoteId] ?? null;
-    if (q) {
-      delete d.quotes[quoteId];
-      save();
+  /** Removes and returns a quote, so each one can be submitted once. Expired quotes come back null. */
+  async takeQuote(quoteId: string): Promise<PendingQuote | null> {
+    const [r] = await sql()`delete from playbook.quotes where quote_id = ${quoteId} returning *`;
+    if (!r || ms(r.createdAt) < Date.now() - QUOTE_TTL_MS) return null;
+    return { ...(r as PendingQuote), createdAt: ms(r.createdAt) };
+  },
+
+  /** Applies, wins, losses, open positions and volume per playbook, in one query. */
+  async statsFor(templateIds: string[]) {
+    const stats = new Map<string, TemplateStats>();
+    for (const id of templateIds) stats.set(id, { applies: 0, wins: 0, losses: 0, open: 0, volumeUsd: 0 });
+    if (!templateIds.length) return stats;
+    const rows = await sql()`
+      select template_id,
+             count(*)::int                                                  as applies,
+             count(*) filter (where status = 'take_profit')::int            as wins,
+             count(*) filter (where status = 'stop_loss')::int              as losses,
+             count(*) filter (where status in ('waiting', 'filled'))::int   as open,
+             coalesce(sum(amount_usd), 0)::float8                           as volume_usd
+      from playbook.applications
+      where status <> 'failed' and template_id in ${sql()(templateIds)}
+      group by template_id`;
+    for (const r of rows) {
+      stats.set(r.templateId, { applies: r.applies, wins: r.wins, losses: r.losses, open: r.open, volumeUsd: r.volumeUsd });
     }
-    return q;
+    return stats;
+  },
+
+  /** Creator fees Flash reported on this creator's fills, and how many times their playbooks were applied. */
+  async earningsFor(creator: string) {
+    const [r] = await sql()`
+      select coalesce(sum(creator_fee_usd), 0)::float8 as fees_usd, count(*)::int as applies
+      from playbook.applications where creator = ${lc(creator)}`;
+    return { feesUsd: r.feesUsd as number, applies: r.applies as number };
   },
 };
-
-export function statsFor(templateId: string): TemplateStats {
-  const apps = db.listApplications((a) => a.templateId === templateId && a.status !== 'failed');
-  return {
-    applies: apps.length,
-    wins: apps.filter((a) => a.status === 'take_profit').length,
-    losses: apps.filter((a) => a.status === 'stop_loss').length,
-    open: apps.filter((a) => a.status === 'waiting' || a.status === 'filled').length,
-    volumeUsd: apps.reduce((s, a) => s + a.amountUsd, 0),
-  };
-}

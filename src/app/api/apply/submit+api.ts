@@ -11,10 +11,10 @@ const isHash = (s: unknown): s is string => typeof s === 'string' && /^0x[0-9a-f
 export async function POST(request: Request) {
   try {
     const b = await request.json();
-    const pq = db.takeQuote(String(b.quoteId));
+    const pq = await db.takeQuote(String(b.quoteId));
     if (!pq) throw new Error('This quote expired. Tap Apply again for a fresh price.');
     if (String(b.funder).toLowerCase() !== pq.funder.toLowerCase()) throw new Error('Wallet changed since the quote');
-    const template = db.getTemplate(pq.templateId);
+    const template = await db.getTemplate(pq.templateId);
     if (!template) throw new Error('Playbook not found');
     if (!isSig(b.userSignature) || !isSig(b.bracketSignature)) throw new Error('Both order signatures are required');
     if (!pq.typed.order || !pq.bracket) throw new Error('This quote has no protection order. Tap Apply again.');
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     const res = await flash<{ orderId: string; attachedBracket?: { status: string } }>('/order', { body: order });
 
     const now = Date.now();
-    const position = db.addApplication({
+    const position = await db.addApplication({
       id: newId('pos'),
       templateId: template.id,
       templateName: template.name,

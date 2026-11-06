@@ -1,13 +1,13 @@
 import { db } from '@/server/db';
 import { fail, ok } from '@/server/http';
-import { withMeta } from '@/server/meta';
+import { withMetaOne } from '@/server/meta';
 
-export function GET(_request: Request, { id }: Record<string, string>) {
+export async function GET(_request: Request, { id }: Record<string, string>) {
   try {
-    const t = db.getTemplate(id);
+    const t = await db.getTemplate(id);
     if (!t) return Response.json({ error: 'Playbook not found' }, { status: 404 });
-    const recent = db.listApplications((a) => a.templateId === id).slice(0, 8);
-    return ok({ template: withMeta(t), recent });
+    const [template, recent] = await Promise.all([withMetaOne(t), db.listApplications({ templateId: id, limit: 8 })]);
+    return ok({ template, recent });
   } catch (e) {
     return fail(e);
   }

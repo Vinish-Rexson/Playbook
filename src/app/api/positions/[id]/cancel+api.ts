@@ -7,7 +7,7 @@ import { fail, ok } from '@/server/http';
 
 export async function POST(request: Request, { id }: Record<string, string>) {
   try {
-    const app = db.getApplication(id);
+    const app = await db.getApplication(id);
     if (!app) throw new Error('Position not found');
     if (app.status !== 'waiting') throw new Error('Only a waiting entry can be cancelled');
     const b = await request.json();
@@ -15,7 +15,7 @@ export async function POST(request: Request, { id }: Record<string, string>) {
     await flash(`/orders/${app.orderId}/cancel`, {
       body: { cancelMessage: cancelMessageFor(app.orderId), userSignature: b.userSignature },
     });
-    return ok({ position: db.updateApplication(id, { status: 'cancelled', closeReason: 'REASON_USER_REQUESTED' }) });
+    return ok({ position: await db.updateApplication(id, { status: 'cancelled', closeReason: 'REASON_USER_REQUESTED' }) });
   } catch (e) {
     return fail(e);
   }

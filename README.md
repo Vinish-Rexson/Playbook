@@ -25,15 +25,21 @@ Everything is live: prices, quotes, fills and fees come from Flash, balances fro
 - Built-in self-custodial wallet: create or import (12/24-word phrase or private key), keys encrypted on the phone
   with SecureStore, fingerprint/PIN unlock, every signature confirmed in an in-app sheet; viem signs and broadcasts on Base
 - Flash API called only from the server routes (`src/server/flash.ts`); the API key never ships in the app
-- JSON file store in `./data` for the hackathon (swap for Supabase before deploying)
+- Supabase Postgres via `postgres` (`src/server/db.ts`). Tables live in a private `playbook` schema
+  (`supabase/migrations`) that Supabase's public Data API doesn't expose, so only the server routes can reach them
 
 ## Setup
 
 1. `npm install`
 2. `cp .env.example .env` and fill in:
+   - `DATABASE_URL`: Supabase → Connect → **Session pooler** connection string (IPv4). URL-encode special
+     characters in the password (`@` → `%40`).
    - `FLASH_API_KEY`: your key from app.definitive.fi (More → Flash → Create Flash Key). Empty = the public dev key from the Flash docs (fees are not collected).
    - `EXPO_PUBLIC_BASE_RPC_URL` (optional): your own Base RPC. Empty = the public `mainnet.base.org` endpoint.
-3. Android toolchain (Windows): set `ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk` and add `%ANDROID_HOME%\platform-tools` to `PATH`.
+3. `npm run db:push` applies `supabase/migrations` with the Supabase CLI (tables plus the starter playbooks).
+   Only migrations the database hasn't recorded yet run. Add `-- --dry-run` to preview. For a schema change,
+   add a new file with `npx supabase migration new <name>` and push again.
+4. Android toolchain (Windows): set `ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk` and add `%ANDROID_HOME%\platform-tools` to `PATH`.
 
 ## Run
 

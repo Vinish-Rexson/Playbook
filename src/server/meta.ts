@@ -1,17 +1,20 @@
 import type { Earnings, Template, TemplateWithMeta } from '@/lib/types';
 
-import { db, statsFor } from './db';
+import { db } from './db';
 
-export const withMeta = (t: Template): TemplateWithMeta => ({
-  ...t,
-  trader: db.getTrader(t.creator),
-  stats: statsFor(t.id),
-});
-
-export function earningsFor(creator: string): Earnings {
-  const apps = db.listApplications((a) => a.creator.toLowerCase() === creator.toLowerCase());
-  return {
-    feesUsd: apps.reduce((s, a) => s + (a.creatorFeeUsd || 0), 0),
-    applies: apps.length,
-  };
+/** Adds each playbook's creator profile and stats, using two queries for the whole list. */
+export async function withMeta(templates: Template[]): Promise<TemplateWithMeta[]> {
+  const [traders, stats] = await Promise.all([
+    db.getTraders([...new Set(templates.map((t) => t.creator))]),
+    db.statsFor(templates.map((t) => t.id)),
+  ]);
+  return templates.map((t) => ({
+    ...t,
+    trader: traders.get(t.creator.toLowerCase()) ?? null,
+    stats: stats.get(t.id)!,
+  }));
 }
+
+export const withMetaOne = async (t: Template) => (await withMeta([t]))[0];
+
+export const earningsFor = (creator: string): Promise<Earnings> => db.earningsFor(creator);

@@ -1,8 +1,12 @@
 import { db, HOUSE } from '@/server/db';
 import { fail, isAddress, ok } from '@/server/http';
 
-export function GET() {
-  return ok({ traders: db.listTraders() });
+export async function GET() {
+  try {
+    return ok({ traders: await db.listTraders() });
+  } catch (e) {
+    return fail(e);
+  }
 }
 
 /** Create or update a trader profile. No verification by design: the template stats speak. */
@@ -17,7 +21,7 @@ export async function POST(request: Request) {
       .toLowerCase()
       .replace(/[^a-z0-9_]/g, '')
       .slice(0, 20);
-    const trader = db.upsertTrader({
+    const trader = await db.upsertTrader({
       address: b.address,
       name,
       handle: handle || 'trader',

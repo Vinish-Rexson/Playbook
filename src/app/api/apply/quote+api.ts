@@ -11,7 +11,7 @@ export async function POST(request: Request) {
   try {
     const b = await request.json();
     if (!isAddress(b.funder)) throw new Error('Connect a wallet first');
-    const template = db.getTemplate(String(b.templateId));
+    const template = await db.getTemplate(String(b.templateId));
     if (!template) throw new Error('Playbook not found');
     const amountUsd = Math.round(Number(b.amountUsd) * 100) / 100;
     if (!Number.isFinite(amountUsd) || amountUsd < MIN_APPLY_USD) {
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     if (!q.evm?.orderTypedData) throw new Error('Flash returned no order to sign');
     if (!ab?.evm?.orderTypedData) throw new Error('Flash returned no take-profit / stop-loss order to sign');
 
-    db.putQuote({
+    await db.putQuote({
       quoteId: q.quoteId,
       templateId: template.id,
       funder: b.funder,
