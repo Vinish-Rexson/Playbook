@@ -45,3 +45,7 @@ example
 # Playbook
 .env
 data/
+/android
+/ios
+build-android.log
+expo-server.log
