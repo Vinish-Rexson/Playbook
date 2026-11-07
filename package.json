@@ -63,7 +63,9 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "db:push": "node scripts/db-push.mjs",
-    "release": "node scripts/release.mjs"
+    "release": "node scripts/release.mjs",
+    "demo": "expo start --tunnel",
+    "seed:demo": "node scripts/seed-demo.mjs"
   },
   "private": true
 }

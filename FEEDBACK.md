@@ -1,7 +1,9 @@
 # Uniswap API: developer feedback
 
 Feedback from integrating the **Uniswap API** (`trade-api.gateway.uniswap.org/v1`) into **Playbook**, a mobile
-copy-trading app with a built-in self-custodial wallet (Expo / React Native, server routes on Vercel).
+social copy-trading app with a built-in self-custodial wallet (Expo / React Native, server routes on Vercel).
+Playbook's trades are executed by Definitive Flash; Uniswap handles swaps inside the wallet, most importantly buying
+the USDC a follower needs to apply a playbook. Project overview: [README](README.md).
 
 ## What we built
 
@@ -17,8 +19,34 @@ copy-trading app with a built-in self-custodial wallet (Expo / React Native, ser
 
   The API key stays on the server. The app calls our own `/api/uniswap/quote` and `/api/uniswap/swap` routes.
 
-Code: [src/server/uniswap.ts](src/server/uniswap.ts), [src/lib/swapFlow.ts](src/lib/swapFlow.ts),
-[src/app/wallet/swap.tsx](src/app/wallet/swap.tsx). See the README section "Uniswap integration".
+### Where to verify the integration
+
+| What | Code |
+| --- | --- |
+| Uniswap API client (server only, `x-api-key`, 6 req/s pacing, 429 retry) | [src/server/uniswap.ts#L31](src/server/uniswap.ts#L31) |
+| `POST /quote` (`EXACT_INPUT` / `EXACT_OUTPUT`, v2 / v3 / v4, 0.5% slippage) | [src/server/uniswap.ts#L84](src/server/uniswap.ts#L84) |
+| `POST /check_approval` (Permit2 approval for ERC-20 input) | [src/server/uniswap.ts#L107](src/server/uniswap.ts#L107) |
+| `POST /swap` (quote + Permit2 signature → transaction) | [src/server/uniswap.ts#L137](src/server/uniswap.ts#L137) |
+| App routes that proxy the API | [quote+api.ts](src/app/api/uniswap/quote%2Bapi.ts), [swap+api.ts](src/app/api/uniswap/swap%2Bapi.ts) |
+| Wallet flow: approval → Permit2 signature → router check → send | [src/lib/swapFlow.ts#L34](src/lib/swapFlow.ts#L34) |
+| `permitData` → standard EIP-712 JSON | [src/lib/swapFlow.ts#L22](src/lib/swapFlow.ts#L22) |
+| Swap must call a known Universal Router on Base | [src/lib/swapFlow.ts#L60](src/lib/swapFlow.ts#L60), [src/lib/constants.ts#L16](src/lib/constants.ts#L16) |
+| Confirmation sheet for the swap and the Permit2 permit | [src/wallet/describe.ts#L69](src/wallet/describe.ts#L69), [src/wallet/describe.ts#L174](src/wallet/describe.ts#L174) |
+| "Get USDC with Uniswap" in the apply flow | [src/lib/applyFlow.ts#L38](src/lib/applyFlow.ts#L38), [src/components/ApplySheet.tsx#L117](src/components/ApplySheet.tsx#L117) |
+| Swap screen | [src/app/wallet/swap.tsx](src/app/wallet/swap.tsx) |
+
+### How we tested it
+
+Live against the Uniswap API on Base mainnet, without moving funds: ETH → USDC exact-input and exact-output quotes,
+`/swap` transactions simulated with `eth_call` from a funded address (both succeeded), and a fresh wallet selling USDC
+(Permit2 approval requested, our Permit2 signature accepted by `/swap`). Then a real swap from the app on a phone.
+
+### At a glance
+
+- **Ease of use:** 8 / 10
+- **Time to first working integration:** about two hours, from reading the docs to a simulated swap on Base mainnet
+- **Docs we used:** the integration guide, the `/quote`, `/check_approval` and `/swap` API reference, supported
+  chains and the FAQ (the `.md` versions)
 
 ## What worked well
 

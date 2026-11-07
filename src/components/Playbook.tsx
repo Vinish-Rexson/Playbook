@@ -1,15 +1,18 @@
 // Domain components: rule strip, playbook card, status tag, stepper.
 import * as Haptics from 'expo-haptics';
-import { Minus, Plus } from 'lucide-react-native';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { ArrowBigDown, ArrowBigUp, Check, Minus, Plus } from 'lucide-react-native';
+import { memo } from 'react';
+import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { NETWORK_DOT } from '@/components/NetworkSwitch';
+import { isFollowing, toggleFollow, useSocial, vote, votesFor } from '@/hooks/useSocial';
 import { NETWORKS } from '@/lib/constants';
 import { durationLabel, entryTypeOf, pct } from '@/lib/pricing';
 import type { OrderOptions, PositionStatus, TemplateWithMeta } from '@/lib/types';
 import { Avatar, Pill, Row } from '@/ui/primitives';
 import { T } from '@/ui/Text';
-import { colors, radius, space } from '@/ui/theme';
+import { colors, fonts, radius, space } from '@/ui/theme';
+import { useWallet } from '@/wallet/WalletProvider';
 
 type Rules = Pick<TemplateWithMeta, 'entryOffsetPct' | 'takeProfitPct' | 'stopLossPct'> &
   Partial<Pick<TemplateWithMeta, 'chain' | 'entryType' | 'twapMinutes'>>;
@@ -71,47 +74,98 @@ export function NetworkTag({ chain }: { chain?: TemplateWithMeta['chain'] }) {
   );
 }
 
-export function TemplateCard({ t, onPress }: { t: TemplateWithMeta; onPress: () => void }) {
+/** Up / down arrows with counts (kept on this phone; see hooks/useSocial). */
+export function VotePill({ id }: { id: string }) {
+  const social = useSocial();
+  const { up, down, mine } = votesFor(social, id);
+  const tap = (dir: 1 | -1) => {
+    Haptics.selectionAsync().catch(() => {});
+    vote(id, dir);
+  };
+  return (
+    <View style={st.votes}>
+      <Pressable onPress={() => tap(1)} hitSlop={6} style={[st.voteBtn, mine === 1 && { backgroundColor: colors.profitSoft }]} accessibilityLabel={`Upvote, ${up}`}>
+        <ArrowBigUp size={15} strokeWidth={1.75} color={mine === 1 ? colors.profit : colors.textDim} fill={mine === 1 ? colors.profit : 'transparent'} />
+        <T v="mono" color={mine === 1 ? colors.profit : colors.text}>
+          {up}
+        </T>
+      </Pressable>
+      <View style={st.voteLine} />
+      <Pressable onPress={() => tap(-1)} hitSlop={6} style={[st.voteBtn, mine === -1 && { backgroundColor: colors.lossSoft }]} accessibilityLabel={`Downvote, ${down}`}>
+        <ArrowBigDown size={15} strokeWidth={1.75} color={mine === -1 ? colors.loss : colors.textDim} fill={mine === -1 ? colors.loss : 'transparent'} />
+        <T v="mono" color={mine === -1 ? colors.loss : colors.text}>
+          {down}
+        </T>
+      </Pressable>
+    </View>
+  );
+}
+
+/** Follow a creator (kept on this phone): their playbooks show up under Discover → Following. */
+export function FollowButton({ address }: { address: string }) {
+  const social = useSocial();
+  const on = isFollowing(social, address);
+  return (
+    <Pressable
+      onPress={() => {
+        Haptics.selectionAsync().catch(() => {});
+        toggleFollow(address);
+      }}
+      hitSlop={6}
+      style={({ pressed }) => [st.follow, on ? st.followOn : st.followOff, { transform: [{ scale: pressed ? 0.95 : 1 }] }]}
+      accessibilityLabel={on ? 'Unfollow creator' : 'Follow creator'}>
+      {on ? <Check size={12} strokeWidth={2.5} color={colors.text} /> : <Plus size={12} strokeWidth={2.5} color={colors.onInk} />}
+      <T v="small" color={on ? colors.text : colors.onInk} style={{ fontFamily: fonts.bodySemi }}>
+        {on ? 'Following' : 'Follow'}
+      </T>
+    </Pressable>
+  );
+}
+
+export const TemplateCard = memo(function TemplateCard({ t, onPress, style }: { t: TemplateWithMeta; onPress: () => void; style?: StyleProp<ViewStyle> }) {
+  const w = useWallet();
   const closed = t.stats.wins + t.stats.losses;
   const winRate = closed > 0 ? Math.round((100 * t.stats.wins) / closed) : null;
+  const mine = !!w.address && w.address.toLowerCase() === t.creator.toLowerCase();
   return (
     <Pressable
       onPress={() => {
         Haptics.selectionAsync().catch(() => {});
         onPress();
       }}
-      style={({ pressed }) => [st.card, { transform: [{ scale: pressed ? 0.98 : 1 }] }]}>
+      style={({ pressed }) => [st.card, style, { transform: [{ scale: pressed ? 0.98 : 1 }] }]}>
       <Row gap={12}>
-        <Avatar name={t.trader?.name} tone={t.trader?.avatar} size={40} />
+        <Avatar name={t.trader?.name} tone={t.trader?.avatar} size={38} />
         <View style={{ flex: 1 }}>
           <T v="h3" numberOfLines={1}>
             {t.name}
           </T>
           <T v="small" numberOfLines={1}>
-            {t.trader?.name ?? 'Unknown'}
+            by {t.trader?.name ?? 'Unknown'}
           </T>
         </View>
         <NetworkTag chain={t.chain} />
       </Row>
-      {t.description ? (
-        <T v="small" numberOfLines={2} style={{ marginTop: space(3) }}>
-          {t.description}
-        </T>
-      ) : null}
+      <T v="small" numberOfLines={2} style={{ marginTop: space(3), minHeight: 36 }}>
+        {t.description || 'No description.'}
+      </T>
       <View style={{ marginTop: space(3) }}>
         <RuleChips t={t} />
       </View>
-      <Row style={{ justifyContent: 'space-between', marginTop: space(3) }}>
-        <T v="mono">
-          {t.stats.applies} applied · {winRate === null ? 'no closed trades' : `${winRate}% wins`}
-        </T>
-        <T v="mono" color={colors.text}>
-          {t.cutPct}% creator cut
-        </T>
+      <T v="mono" style={{ marginTop: space(3) }} numberOfLines={1}>
+        {t.stats.applies} applied · {winRate === null ? 'no closed trades' : `${winRate}% wins`} · {t.cutPct}% cut
+      </T>
+      <Row style={[st.footer, { justifyContent: 'space-between' }]}>
+        <VotePill id={t.id} />
+        {mine ? (
+          <T v="mono">Your playbook</T>
+        ) : (
+          <FollowButton address={t.creator} />
+        )}
       </Row>
     </Pressable>
   );
-}
+});
 
 export const statusMeta: Record<PositionStatus, { label: string; color: string }> = {
   waiting: { label: 'Waiting for entry', color: colors.warn },
@@ -207,6 +261,13 @@ const st = StyleSheet.create({
     justifyContent: 'center',
   },
   stepBtnOn: { backgroundColor: colors.cardHi },
+  footer: { marginTop: space(3), paddingTop: space(3), borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.borderHi },
+  votes: { flexDirection: 'row', alignItems: 'center', borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bg, overflow: 'hidden' },
+  voteBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, height: 30 },
+  voteLine: { width: 1, height: 16, backgroundColor: colors.border },
+  follow: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, height: 30, borderRadius: radius.pill },
+  followOff: { backgroundColor: colors.ink },
+  followOn: { backgroundColor: colors.accent, borderWidth: 1.25, borderColor: colors.ink },
 });
 
 

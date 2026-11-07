@@ -53,3 +53,17 @@ expo-server.log
 .vercel
 .env*
 !.env.example
+
+# Built APKs to share
+/dist-apk
+*.apk
+
+# Demo footage (raw clips include wallet secrets; never commit)
+video/
+
+# Video files anywhere (renders, screen recordings) and the raw frames pulled from them
+*.mp4
+*.mov
+*.m4a
+*.wav
+submission/frames/

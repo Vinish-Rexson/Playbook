@@ -1,62 +1,145 @@
-// Discover's market card: live ETH / SOL price with a real price chart (1D to 1Y), green above the range's opening
-// price and red below it (dashed baseline). Drag across it to read
-// any point.
+// Discover's market card: live ETH / SOL price as a smooth line chart read the way a trader reads one:
+//   • dashed line = where the range opened; the line is green above it, red below it
+//   • the range's high and low are marked on the line with their prices
+//   • the live price pulses at the end of the line
+//   • drag across to read any point (price, change from the open, time)
+// The chart height comes from the screen (Discover fits the page to the phone), so nothing is left empty.
 import * as Haptics from 'expo-haptics';
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View, type GestureResponderEvent } from 'react-native';
-import Svg, { Circle, ClipPath, Defs, G, Line, Path, Rect } from 'react-native-svg';
+import Svg, { Circle, ClipPath, Defs, G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 import { NETWORK_DOT } from '@/components/NetworkSwitch';
 import { useCandles } from '@/hooks/useCandles';
 import { usePrice } from '@/hooks/usePrice';
 import type { Timeframe } from '@/lib/api';
 import { fmtTime } from '@/lib/chartMath';
-import { usd } from '@/lib/pricing';
 import { CHAINS, NETWORKS, type Chain } from '@/lib/constants';
+import { usd } from '@/lib/pricing';
 import { Row, useScrollLock } from '@/ui/primitives';
 import { T } from '@/ui/Text';
 import { colors, fonts, radius, space } from '@/ui/theme';
 
-const RANGES: { label: string; tf: Timeframe; n: number }[] = [
-  { label: '1D', tf: '15m', n: 96 },
-  { label: '1W', tf: '1h', n: 168 },
-  { label: '1M', tf: '6h', n: 120 },
-  { label: '1Y', tf: '1d', n: 350 },
+const RANGES: { label: string; tf: Timeframe; n: number; since: string }[] = [
+  { label: '1D', tf: '15m', n: 96, since: '24h' },
+  { label: '1W', tf: '1h', n: 168, since: '7d' },
+  { label: '1M', tf: '6h', n: 120, since: '30d' },
+  { label: '1Y', tf: '1d', n: 350, since: '1y' },
 ];
-const H = 150;
+const PAD_Y = 16; // room for the H / L labels above and below the line
+const MONO = fonts.mono;
 
-export function MarketCard() {
+type Pt = { x: number; y: number };
+
+/** Smooth path through the points (Catmull-Rom as cubic Béziers, control points kept inside the chart). */
+function smooth(pts: Pt[], top: number, bottom: number) {
+  if (pts.length < 2) return '';
+  const clampY = (y: number) => Math.max(top, Math.min(bottom, y));
+  let d = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] ?? pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] ?? p2;
+    const c1 = { x: p1.x + (p2.x - p0.x) / 6, y: clampY(p1.y + (p2.y - p0.y) / 6) };
+    const c2 = { x: p2.x - (p3.x - p1.x) / 6, y: clampY(p2.y - (p3.y - p1.y) / 6) };
+    d += `C${c1.x.toFixed(1)},${c1.y.toFixed(1)} ${c2.x.toFixed(1)},${c2.y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
+
+const short = (p: number) => (p >= 1000 ? usd(p, 0) : usd(p));
+
+const Chart = memo(function Chart({ closes, width, height, hover }: { closes: number[]; width: number; height: number; hover: number | null }) {
+  const geo = useMemo(() => {
+    const lo = Math.min(...closes);
+    const hi = Math.max(...closes);
+    const span = hi - lo || hi * 0.01;
+    // Right padding leaves room for the live-price dot and its glow.
+    const x = (i: number) => 4 + (i / (closes.length - 1)) * (width - 18);
+    const y = (p: number) => PAD_Y + ((hi - p) / span) * (height - PAD_Y * 2);
+    const pts = closes.map((c, i) => ({ x: x(i), y: y(c) }));
+    const line = smooth(pts, PAD_Y - 2, height - PAD_Y + 2);
+    const base = y(closes[0]);
+    const area = `${line}L${pts[pts.length - 1].x.toFixed(1)},${base.toFixed(1)}L${pts[0].x.toFixed(1)},${base.toFixed(1)}Z`;
+    const hiI = closes.indexOf(hi);
+    const loI = closes.indexOf(lo);
+    return { x, y, line, area, base, hi, lo, hiI, loI };
+  }, [closes, width, height]);
+
+  const last = closes.length - 1;
+  const at = hover ?? last;
+  const tone = closes[at] >= closes[0] ? colors.profit : colors.loss;
+  // Keep the H / L labels inside the card.
+  const labelX = (i: number) => Math.max(0, Math.min(width - 64, geo.x(i) - 30));
+
+  return (
+    <Svg width={width} height={height}>
+      <Defs>
+        <ClipPath id="mk-above">
+          <Rect x={0} y={0} width={width} height={geo.base} />
+        </ClipPath>
+        <ClipPath id="mk-below">
+          <Rect x={0} y={geo.base} width={width} height={height - geo.base} />
+        </ClipPath>
+      </Defs>
+
+      <Line x1={0} x2={width} y1={geo.base} y2={geo.base} stroke={colors.borderHi} strokeWidth={1} strokeDasharray="2 5" strokeLinecap="round" />
+
+      <G clipPath="url(#mk-above)">
+        <Path d={geo.area} fill={colors.profit} opacity={0.1} />
+        <Path d={geo.line} stroke={colors.profit} strokeWidth={2.25} fill="none" strokeLinejoin="round" strokeLinecap="round" />
+      </G>
+      <G clipPath="url(#mk-below)">
+        <Path d={geo.area} fill={colors.loss} opacity={0.1} />
+        <Path d={geo.line} stroke={colors.loss} strokeWidth={2.25} fill="none" strokeLinejoin="round" strokeLinecap="round" />
+      </G>
+
+      {hover === null ? (
+        <>
+          <Circle cx={geo.x(geo.hiI)} cy={geo.y(geo.hi)} r={2.5} fill={colors.ink} />
+          <SvgText x={labelX(geo.hiI)} y={geo.y(geo.hi) - 6} fill={colors.textDim} fontSize={9.5} fontFamily={MONO}>
+            {`H ${short(geo.hi)}`}
+          </SvgText>
+          <Circle cx={geo.x(geo.loI)} cy={geo.y(geo.lo)} r={2.5} fill={colors.ink} />
+          <SvgText x={labelX(geo.loI)} y={geo.y(geo.lo) + 13} fill={colors.textDim} fontSize={9.5} fontFamily={MONO}>
+            {`L ${short(geo.lo)}`}
+          </SvgText>
+        </>
+      ) : (
+        <Line x1={geo.x(at)} x2={geo.x(at)} y1={4} y2={height - 4} stroke={colors.ink} strokeWidth={1} strokeDasharray="2 4" strokeLinecap="round" />
+      )}
+
+      <Circle cx={geo.x(at)} cy={geo.y(closes[at])} r={hover === null ? 9 : 10} fill={tone} opacity={0.18} />
+      <Circle cx={geo.x(at)} cy={geo.y(closes[at])} r={4.5} fill={tone} stroke={colors.card} strokeWidth={2} />
+    </Svg>
+  );
+});
+
+export function MarketCard({ chartHeight = 120 }: { chartHeight?: number }) {
   const [chain, setChain] = useState<Chain>('base');
   const [range, setRange] = useState(RANGES[0]);
   const [width, setWidth] = useState(0);
   const [hover, setHover] = useState<number | null>(null);
   const live = usePrice(chain);
   const all = useCandles(chain, range.tf);
-  const data = useMemo(() => (all ? all.slice(-range.n) : null), [all, range.n]);
 
-  const geo = useMemo(() => {
-    if (!data || data.length < 2 || !width) return null;
-    const closes = data.map((d) => d.c);
+  // About one point per 4 px keeps the curve smooth without drawing hundreds of segments.
+  const view = useMemo(() => {
+    if (!all?.length || !width) return null;
+    const data = all.slice(-range.n);
+    const step = Math.max(1, Math.ceil(data.length / Math.max(24, Math.floor(width / 4))));
+    const pick = data.filter((_, i) => i % step === 0 || i === data.length - 1);
+    const closes = pick.map((d) => d.c);
     if (live) closes[closes.length - 1] = live.price;
-    const lo = Math.min(...closes);
-    const hi = Math.max(...closes);
-    const pad = (hi - lo) * 0.08 || hi * 0.01;
-    const x = (i: number) => (i / (closes.length - 1)) * width;
-    const y = (p: number) => 6 + ((hi + pad - p) / (hi - lo + 2 * pad)) * (H - 12);
-    const line = closes.map((c, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(c).toFixed(1)}`).join('');
-    // Baseline = the price at the start of the range: green above it, red below it.
-    const base = y(closes[0]);
-    const area = `${line}L${width.toFixed(1)},${base.toFixed(1)}L0,${base.toFixed(1)}Z`;
-    return { closes, x, y, line, area, base };
-  }, [data, width, live]);
+    return { closes, times: pick.map((d) => d.t) };
+  }, [all, range.n, live, width]);
 
-  const pick = (px: number) => {
-    if (!geo) return;
-    const i = Math.round((px / width) * (geo.closes.length - 1));
-    setHover(Math.max(0, Math.min(geo.closes.length - 1, i)));
-  };
-  // Scrub with one finger (React Native responder props on an overlay); the page holds still meanwhile.
   const lockScroll = useScrollLock();
+  const pick = (x: number) => {
+    if (!view) return;
+    setHover(Math.max(0, Math.min(view.closes.length - 1, Math.round((x / width) * (view.closes.length - 1)))));
+  };
   const release = () => {
     setHover(null);
     lockScroll(false);
@@ -76,12 +159,10 @@ export function MarketCard() {
     onResponderTerminate: release,
   };
 
-  const first = geo?.closes[0];
-  const shown = hover !== null && geo ? geo.closes[hover] : live?.price ?? geo?.closes.at(-1);
-  const change = first && shown ? ((shown - first) / first) * 100 : null;
+  const price = hover !== null && view ? view.closes[hover] : live?.price ?? view?.closes.at(-1) ?? null;
+  const open = view?.closes[0];
+  const change = open && price ? ((price - open) / open) * 100 : null;
   const up = (change ?? 0) >= 0;
-  const tone = up ? colors.profit : colors.loss;
-  const since = range.label === '1D' ? 'vs 24h ago' : range.label === '1W' ? 'vs a week ago' : range.label === '1M' ? 'vs a month ago' : 'vs a year ago';
 
   return (
     <View style={st.card}>
@@ -94,7 +175,8 @@ export function MarketCard() {
                 setChain(c);
                 setHover(null);
               }}
-              style={[st.segItem, c === chain && st.segOn]}>
+              style={[st.segItem, c === chain && st.segOn]}
+              accessibilityLabel={`Show ${NETWORKS[c].asset}`}>
               <View style={[st.dot, { backgroundColor: NETWORK_DOT[c] }]} />
               <T v="small" color={c === chain ? colors.text : colors.textDim} style={{ fontFamily: fonts.bodyMed }}>
                 {NETWORKS[c].asset}
@@ -102,83 +184,62 @@ export function MarketCard() {
             </Pressable>
           ))}
         </View>
-        <Row gap={6}>
-          <View style={[st.dot, { backgroundColor: live ? colors.profit : colors.textMute }]} />
-          <T v="mono">{live ? 'Live · Flash' : 'Connecting'}</T>
+        <Row gap={2}>
+          {RANGES.map((r) => {
+            const on = r.label === range.label;
+            return (
+              <Pressable
+                key={r.label}
+                onPress={() => {
+                  setRange(r);
+                  setHover(null);
+                }}
+                hitSlop={4}
+                style={[st.range, on && st.rangeOn]}
+                accessibilityLabel={`Range ${r.label}`}>
+                <T v="mono" color={on ? colors.onInk : colors.textDim} style={{ fontSize: 11 }}>
+                  {r.label}
+                </T>
+              </Pressable>
+            );
+          })}
         </Row>
       </Row>
 
-      <T v="hero" style={{ marginTop: space(4) }}>
-        {shown ? usd(shown) : '—'}
-      </T>
-      <Row gap={8} style={{ marginTop: 2 }}>
+      <Row style={{ marginTop: space(3), justifyContent: 'space-between', alignItems: 'center' }}>
+        <T v="numLg" numberOfLines={1} adjustsFontSizeToFit style={{ flexShrink: 1 }}>
+          {price ? usd(price) : '—'}
+        </T>
         {change !== null ? (
-          <T v="num" color={tone} style={{ fontSize: 14 }}>
-            {up ? '+' : '−'}
-            {Math.abs(change).toFixed(2)}%
-          </T>
+          <View style={[st.change, { backgroundColor: up ? colors.profitSoft : colors.lossSoft }]}>
+            <T v="mono" color={up ? colors.profit : colors.loss} style={{ fontFamily: fonts.monoMed }}>
+              {up ? '▲' : '▼'} {Math.abs(change).toFixed(2)}% · {hover !== null && view ? fmtTime(view.times[hover], range.tf) : range.since}
+            </T>
+          </View>
         ) : null}
-        <T v="small">{hover !== null && data ? fmtTime(data[hover].t, range.tf) : since}</T>
       </Row>
 
-      <View style={{ height: H, marginTop: space(4) }} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
-        {geo ? (
+      <View style={{ height: chartHeight, marginTop: space(2), marginHorizontal: -4 }} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+        {view && view.closes.length > 1 ? (
           <>
-            <Svg width={width} height={H}>
-              <Defs>
-                <ClipPath id="above">
-                  <Rect x={0} y={0} width={width} height={geo.base} />
-                </ClipPath>
-                <ClipPath id="below">
-                  <Rect x={0} y={geo.base} width={width} height={H - geo.base} />
-                </ClipPath>
-              </Defs>
-              <G clipPath="url(#above)">
-                <Path d={geo.area} fill={colors.profit} opacity={0.12} />
-                <Path d={geo.line} stroke={colors.profit} strokeWidth={1.75} fill="none" strokeLinejoin="round" />
-              </G>
-              <G clipPath="url(#below)">
-                <Path d={geo.area} fill={colors.loss} opacity={0.12} />
-                <Path d={geo.line} stroke={colors.loss} strokeWidth={1.75} fill="none" strokeLinejoin="round" />
-              </G>
-              <Line x1={0} x2={width} y1={geo.base} y2={geo.base} stroke={colors.textMute} strokeWidth={1} strokeDasharray="3 4" />
-              {(() => {
-                const i = hover ?? geo.closes.length - 1;
-                const above = geo.closes[i] >= geo.closes[0];
-                return (
-                  <>
-                    {hover !== null ? (
-                      <Line x1={geo.x(i)} x2={geo.x(i)} y1={0} y2={H} stroke={colors.textMute} strokeDasharray="3 4" />
-                    ) : null}
-                    <Circle cx={geo.x(i)} cy={geo.y(geo.closes[i])} r={hover !== null ? 6 : 5} fill={above ? colors.profit : colors.loss} stroke={colors.card} strokeWidth={2} />
-                  </>
-                );
-              })()}
-            </Svg>
+            <Chart closes={view.closes} width={width} height={chartHeight} hover={hover} />
             <View style={StyleSheet.absoluteFill} {...touch} />
           </>
         ) : (
-          <ActivityIndicator color={colors.textDim} style={{ marginTop: H / 2 - 12 }} />
+          <ActivityIndicator color={colors.textDim} style={{ marginTop: chartHeight / 2 - 10 }} />
         )}
-      </View>
-
-      <View style={[st.seg, { marginTop: space(4), alignSelf: 'stretch' }]}>
-        {RANGES.map((r) => (
-          <Pressable key={r.label} onPress={() => setRange(r)} style={[st.segItem, { flex: 1, justifyContent: 'center' }, r.label === range.label && st.segOn]}>
-            <T v="small" color={r.label === range.label ? colors.text : colors.textDim} style={{ fontFamily: fonts.bodyMed }}>
-              {r.label}
-            </T>
-          </Pressable>
-        ))}
       </View>
     </View>
   );
 }
 
 const st = StyleSheet.create({
-  card: { borderRadius: radius.xl, padding: space(5), borderWidth: 1.25, borderColor: colors.ink, backgroundColor: colors.card },
+  card: { borderRadius: radius.xl, padding: space(4), paddingBottom: space(3), borderWidth: 1.25, borderColor: colors.ink, backgroundColor: colors.card },
   seg: { flexDirection: 'row', padding: 3, gap: 2, borderRadius: radius.sm, backgroundColor: colors.cardHi },
-  segItem: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.sm - 3 },
+  segItem: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.sm - 3 },
   segOn: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
   dot: { width: 7, height: 7, borderRadius: 4 },
+  range: { paddingHorizontal: 7, height: 26, justifyContent: 'center', borderRadius: radius.pill },
+  rangeOn: { backgroundColor: colors.ink },
+  change: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, marginLeft: space(2) },
 });
